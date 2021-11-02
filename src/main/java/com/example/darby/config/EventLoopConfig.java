@@ -1,4 +1,4 @@
-package com.example.darby;
+package com.example.darby.config;
 
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.util.concurrent.DefaultThreadFactory;
@@ -19,7 +19,7 @@ import reactor.netty.resources.ConnectionProvider;
 import reactor.netty.resources.LoopResources;
 
 @Configuration
-public class PoolsConfig {
+public class EventLoopConfig {
 
   @Bean
   @Primary

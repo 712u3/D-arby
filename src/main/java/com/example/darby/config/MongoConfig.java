@@ -1,4 +1,4 @@
-package com.example.darby;
+package com.example.darby.config;
 
 import com.mongodb.reactivestreams.client.MongoClient;
 import com.mongodb.reactivestreams.client.MongoClients;

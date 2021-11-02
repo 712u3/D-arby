@@ -1,4 +1,4 @@
-package com.example.darby.wcrequest;
+package com.example.darby.dto;
 
 public class WsRequestMessage {
   public String envelope_id;

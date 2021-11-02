@@ -1,4 +1,4 @@
-package com.example.darby.wcrequest;
+package com.example.darby.dto;
 
 import java.util.List;
 

@@ -14,17 +14,17 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
 
 @Component
-public class BadassBeanWebSocket {
+public class SlackWebSocketHolder {
 
   private final String token;
   private final WebClient webClient;
   private final WebSocketClient webSocketClient;
-  private final MyWebSocketHandler myWebSocketHandler;
+  private final SlackRequestHandler myWebSocketHandler;
 
-  public BadassBeanWebSocket(@Value("${xapp-token}") String token,
-                             WebClient webClient,
-                             WebSocketClient webSocketClient,
-                             MyWebSocketHandler myWebSocketHandler) {
+  public SlackWebSocketHolder(@Value("${xapp-token}") String token,
+                              WebClient webClient,
+                              WebSocketClient webSocketClient,
+                              SlackRequestHandler myWebSocketHandler) {
     this.token = token;
     this.webClient = webClient;
     this.webSocketClient = webSocketClient;

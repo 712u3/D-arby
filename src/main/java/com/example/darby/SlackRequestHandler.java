@@ -1,6 +1,7 @@
 package com.example.darby;
 
-import com.example.darby.wcrequest.WsRequestMessage;
+import com.example.darby.documents.User;
+import com.example.darby.dto.WsRequestMessage;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.slack.api.methods.response.chat.ChatPostMessageResponse;
@@ -21,17 +22,17 @@ import org.springframework.web.reactive.socket.WebSocketSession;
 import reactor.core.publisher.Mono;
 
 @Component
-public class MyWebSocketHandler implements WebSocketHandler {
+public class SlackRequestHandler implements WebSocketHandler {
 
   private final String token;
   private final ObjectMapper objectMapper;
   private final WebClient webClient;
   private final ReactiveMongoTemplate reactiveMongoTemplate;
 
-  public MyWebSocketHandler(@Value("${xapp-token}") String token,
-                            ObjectMapper objectMapper,
-                            WebClient webClient,
-                            ReactiveMongoTemplate reactiveMongoTemplate) {
+  public SlackRequestHandler(@Value("${xapp-token}") String token,
+                             ObjectMapper objectMapper,
+                             WebClient webClient,
+                             ReactiveMongoTemplate reactiveMongoTemplate) {
     this.token = token;
     this.objectMapper = objectMapper;
     this.webClient = webClient;
