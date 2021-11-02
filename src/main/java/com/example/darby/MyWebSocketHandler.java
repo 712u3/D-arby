@@ -8,6 +8,7 @@ import com.slack.api.socket_mode.response.AckResponse;
 import java.net.URI;
 import java.net.URISyntaxException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
@@ -25,11 +26,25 @@ public class MyWebSocketHandler implements WebSocketHandler {
   private final String token;
   private final ObjectMapper objectMapper;
   private final WebClient webClient;
+  private final ReactiveMongoTemplate reactiveMongoTemplate;
 
-  public MyWebSocketHandler(@Value("${xapp-token}") String token, ObjectMapper objectMapper, WebClient webClient) {
+  public MyWebSocketHandler(@Value("${xapp-token}") String token,
+                            ObjectMapper objectMapper,
+                            WebClient webClient,
+                            ReactiveMongoTemplate reactiveMongoTemplate) {
     this.token = token;
     this.objectMapper = objectMapper;
     this.webClient = webClient;
+    this.reactiveMongoTemplate = reactiveMongoTemplate;
+
+    reactiveMongoTemplate.save(new User(null, "Bill", 12.3)).block();
+    User aa = reactiveMongoTemplate.findAll(User.class).blockLast();
+//    userCrudRepository.save(new User(null, "Bill", 12.3)).block();
+//    User aa = userCrudRepository.findAll().blockLast();
+    System.out.println("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ");
+    System.out.println(aa.getId());
+    System.out.println(aa.getOwner());
+    System.out.println(aa.getValue());
   }
 
   @Override

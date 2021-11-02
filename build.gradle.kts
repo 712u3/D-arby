@@ -19,6 +19,7 @@ repositories {
 
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-webflux:2.5.5")
+    implementation("org.springframework.boot:spring-boot-starter-data-mongodb-reactive:2.5.5")
 
     // slack on bolt dependencies
     implementation("com.slack.api:bolt:1.12.1")
@@ -29,6 +30,7 @@ dependencies {
     // test
     testImplementation("org.springframework.boot:spring-boot-starter-test:2.5.5")
     testImplementation("io.projectreactor:reactor-test:3.4.11")
+    testImplementation("de.flapdoodle.embed:de.flapdoodle.embed.mongo:3.1.4")
 }
 
 tasks.getByName<Test>("test") {
@@ -37,7 +39,8 @@ tasks.getByName<Test>("test") {
 
 tasks.register<JavaExec>("run") {
     classpath = sourceSets.getByName("main").runtimeClasspath
-    main = "com.example.darby.DarbyApplication"
+    mainClass.set("com.example.darby.DarbyApplication")
+//    main = "com.example.darby.DarbyApplication"
     args("--spring.profiles.active=prod")
 }
 
