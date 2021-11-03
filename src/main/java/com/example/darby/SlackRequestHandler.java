@@ -67,16 +67,7 @@ public class SlackRequestHandler implements WebSocketHandler {
     } else {
     }
 
-
-    Acknowledge response = new Acknowledge(request.envelope_id);
-
-    String result = null;
-    try {
-      result = objectMapper.writeValueAsString(response);
-    } catch (JsonProcessingException e) {
-      e.printStackTrace();
-    }
-    return result;
+    return getAckResponse(request);
   }
 
 
@@ -153,6 +144,18 @@ public class SlackRequestHandler implements WebSocketHandler {
     } catch (JsonProcessingException e) {
       e.printStackTrace();
       throw new RuntimeException("ne rasparsil vhodyashee soobshenie");
+    }
+    return result;
+  }
+
+  private String getAckResponse(WsRequestMessage request) {
+    Acknowledge response = new Acknowledge(request.envelope_id);
+
+    String result = null;
+    try {
+      result = objectMapper.writeValueAsString(response);
+    } catch (JsonProcessingException e) {
+      e.printStackTrace();
     }
     return result;
   }

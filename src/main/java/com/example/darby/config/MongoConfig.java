@@ -9,9 +9,9 @@ import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 @Configuration
 public class MongoConfig {
 
-//  @Bean
-//  public ReactiveMongoTemplate reactiveMongoTemplate() {
-//    MongoClient mongoClient = MongoClients.create();
-//    return new ReactiveMongoTemplate(mongoClient, "test");
-//  }
+  @Bean
+  public ReactiveMongoTemplate reactiveMongoTemplate() {
+    MongoClient mongoClient = MongoClients.create();
+    return new ReactiveMongoTemplate(mongoClient, "test");
+  }
 }
