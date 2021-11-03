@@ -1,4 +1,4 @@
-package com.example.darby.dto;
+package com.example.darby.dto.needrefactor;
 
 public class WsRequestMessagePayloadUser {
   public String id;

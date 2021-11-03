@@ -1,11 +1,10 @@
 package com.example.darby;
 
-import com.example.darby.documents.User;
+import com.example.darby.dto.Acknowledge;
 import com.example.darby.dto.WsRequestMessage;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.slack.api.methods.response.chat.ChatPostMessageResponse;
-import com.slack.api.socket_mode.response.AckResponse;
 import java.net.URI;
 import java.net.URISyntaxException;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,49 +23,29 @@ import reactor.core.publisher.Mono;
 @Component
 public class SlackRequestHandler implements WebSocketHandler {
 
-  private final String token;
+  private final String xoxbToken;
   private final ObjectMapper objectMapper;
   private final WebClient webClient;
   private final ReactiveMongoTemplate reactiveMongoTemplate;
 
-  public SlackRequestHandler(@Value("${xapp-token}") String token,
+  public SlackRequestHandler(@Value("${xoxb-token}") String xoxbToken,
                              ObjectMapper objectMapper,
                              WebClient webClient,
                              ReactiveMongoTemplate reactiveMongoTemplate) {
-    this.token = token;
+    this.xoxbToken = xoxbToken;
     this.objectMapper = objectMapper;
     this.webClient = webClient;
     this.reactiveMongoTemplate = reactiveMongoTemplate;
-
-    reactiveMongoTemplate.save(new User(null, "Bill", 12.3)).block();
-    User aa = reactiveMongoTemplate.findAll(User.class).blockLast();
-//    userCrudRepository.save(new User(null, "Bill", 12.3)).block();
-//    User aa = userCrudRepository.findAll().blockLast();
-    System.out.println("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ");
-    System.out.println(aa.getId());
-    System.out.println(aa.getOwner());
-    System.out.println(aa.getValue());
   }
 
   @Override
   public Mono<Void> handle(WebSocketSession session) {
-
-    Mono<Void> multiplexMessageStream = session.receive()
+    return session.receive()
         .log()
         .map(WebSocketMessage::getPayloadAsText)
-        .map(request -> getResponse(request))
-        .filter(resp -> !resp.equals(""))
-        .log()
+        .mapNotNull(wsRequest -> getResponse(wsRequest))
         .map(session::textMessage)
         .as(messages -> session.send(messages));
-
-    return multiplexMessageStream;
-
-//    Mono<WebSocketMessage> initOutMessage = Mono.just(session.textMessage("42"));
-//    return session.send(initOutMessage)
-//        // then/thenMany — подписаться на второго Publisher-а после окончания первого Publisher-а.
-//        // наш initOutMessage это моно паблишер с 1 эвентом
-//        .then(multiplexMessageStream);
   }
 
 
@@ -77,27 +56,19 @@ public class SlackRequestHandler implements WebSocketHandler {
 
 
     if (request.type.equals("hello")) { // init message
-      var resss = "awd";
     } else if (request.type.equals("events_api")) { // messages/reactions
-      var resss = "aw3223d";
     } else if (request.type.equals("interactive")) { // shortcut
-      var resss = "aw3223d";
-      WsRequestMessage message = rasparsit(req, WsRequestMessage.class);
-      probuemOtvetit(message);
+      if ("shortcut".equals(request.payload.type) && "darby_play_id".equals(request.payload.callback_id)) {
+        sendDialogForm(request);
+      } else if ("dialog_submission".equals(request.payload.type) && "create_room_id".equals(request.payload.callback_id)) {
+        // тогда создаем в базе комнату со всеми вводными
+        // + постим сообщение "тредик для оценки портфеля х"
+      }
     } else {
-      var resss = "3223";
     }
 
 
-
-
-
-
-
-
-
-    AckResponse response = new AckResponse();
-    response.setEnvelopeId(request.envelope_id);
+    Acknowledge response = new Acknowledge(request.envelope_id);
 
     String result = null;
     try {
@@ -109,52 +80,50 @@ public class SlackRequestHandler implements WebSocketHandler {
   }
 
 
-
-  private void probuemOtvetit(WsRequestMessage request) {
-//    MultiValueMap<String, String> bodyValues = new LinkedMultiValueMap<>();
-//    bodyValues.add("text", "otvet");
-//    bodyValues.add("channel", request.payload.event.channel);
-//    bodyValues.add("thread_ts", request.payload.event.ts);
-//
-//    try {
-//      webClient.post()
-//          .uri(new URI("https://slack.com/api/chat.postMessage"))
-//          .header("Authorization", "Bearer " + token)
-//          .contentType(MediaType.APPLICATION_JSON)
-//          .body(BodyInserters.fromFormData(bodyValues))
-//          .retrieve()
-//          .bodyToMono(ChatPostMessageResponse.class)
-//          .subscribe(); // .block() блокирует, так что .subscribe()
-//
-//    } catch (URISyntaxException e) {
-//      e.printStackTrace();
-//    }
-
+  private void sendDialogForm(WsRequestMessage request) {
+    //  https://api.slack.com/dialogs#select_elements
     String modalJson = "{\n" +
-        "  \"type\": \"modal\",\n" +
-        "  \"callback_id\": \"modal-identifier\",\n" +
-        "  \"title\": {\n" +
-        "    \"type\": \"plain_text\",\n" +
-        "    \"text\": \"Just a modal\"\n" +
-        "  },\n" +
-        "  \"blocks\": [\n" +
-        "    {\n" +
-        "      \"type\": \"section\",\n" +
-        "      \"block_id\": \"section-identifier\",\n" +
-        "      \"text\": {\n" +
-        "        \"type\": \"mrkdwn\",\n" +
-        "        \"text\": \"*Welcome* to ~my~ Block Kit _modal_!\"\n" +
-        "      },\n" +
-        "      \"accessory\": {\n" +
-        "        \"type\": \"button\",\n" +
-        "        \"text\": {\n" +
-        "          \"type\": \"plain_text\",\n" +
-        "          \"text\": \"Just a button\",\n" +
+        "    \"callback_id\": \"create_room_id\",\n" +
+        "    \"title\": \"Создать комнату\",\n" +
+        "    \"submit_label\": \"Создать\",\n" +
+        "    \"elements\": [\n" +
+        "        {\n" +
+        "            \"label\": \"Ссылка на портфель\",\n" +
+        "            \"type\": \"text\",\n" +
+        "            \"name\": \"my_name_1\"\n" +
         "        },\n" +
-        "        \"action_id\": \"button-identifier\",\n" +
-        "      }\n" +
-        "    }\n" +
-        "  ],\n" +
+        "        {\n" +
+        "            \"label\": \"Список задач\",\n" +
+        "            \"type\": \"textarea\",\n" +
+        "            \"name\": \"my_name_2\",\n" +
+        "            \"hint\": \"на отдельных строчках\"\n" +
+        "        },\n" +
+        "        {\n" +
+        "            \"label\": \"Выбрать шкалу\",\n" +
+        "            \"type\": \"select\",\n" +
+        "            \"name\": \"my_name_3\",\n" +
+        "            \"options\": [\n" +
+        "                {\n" +
+        "                  \"label\": \"первый вариант: 1,2,3,4\",\n" +
+        "                  \"value\": \"select1\"\n" +
+        "                },\n" +
+        "                {\n" +
+        "                  \"label\": \"второй вариант 4,5,6,7\",\n" +
+        "                  \"value\": \"select2\"\n" +
+        "                },\n" +
+        "                {\n" +
+        "                  \"label\": \"своя шкала\",\n" +
+        "                  \"value\": \"select3\"\n" +
+        "                } \n" +
+        "              ]\n" +
+        "        },\n" +
+        "        {\n" +
+        "            \"label\": \"Своя шкала\",\n" +
+        "            \"type\": \"text\",\n" +
+        "            \"name\": \"my_name_4\",\n" +
+        "            \"optional\": true\n" +
+        "        }\n" +
+        "    ]\n" +
         "}";
 
     MultiValueMap<String, String> bodyValues = new LinkedMultiValueMap<>();
@@ -164,7 +133,7 @@ public class SlackRequestHandler implements WebSocketHandler {
     try {
       webClient.post()
           .uri(new URI("https://slack.com/api/dialog.open"))
-          .header("Authorization", "Bearer " + token)
+          .header("Authorization", "Bearer " + xoxbToken)
           .contentType(MediaType.APPLICATION_JSON)
           .body(BodyInserters.fromFormData(bodyValues))
           .retrieve()
@@ -187,5 +156,34 @@ public class SlackRequestHandler implements WebSocketHandler {
     }
     return result;
   }
+
+
+//    MultiValueMap<String, String> bodyValues = new LinkedMultiValueMap<>();
+//    bodyValues.add("text", "otvet");
+//    bodyValues.add("channel", request.payload.event.channel);
+//    bodyValues.add("thread_ts", request.payload.event.ts);
+//
+//    try {
+//      webClient.post()
+//          .uri(new URI("https://slack.com/api/chat.postMessage"))
+//          .header("Authorization", "Bearer " + token)
+//          .contentType(MediaType.APPLICATION_JSON)
+//          .body(BodyInserters.fromFormData(bodyValues))
+//          .retrieve()
+//          .bodyToMono(ChatPostMessageResponse.class)
+//          .subscribe(); // .block() блокирует, так что .subscribe()
+//
+//    } catch (URISyntaxException e) {
+//      e.printStackTrace();
+//    }
+
+
+
+//    reactiveMongoTemplate.save(new User(null, "Bill", 12.3)).block();
+//    User aa = reactiveMongoTemplate.findAll(User.class).blockLast();
+//    System.out.println("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ");
+//    System.out.println(aa.getId());
+//    System.out.println(aa.getOwner());
+//    System.out.println(aa.getValue());
 }
 

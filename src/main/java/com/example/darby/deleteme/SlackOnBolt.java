@@ -21,19 +21,9 @@
 //@Configuration
 //public class SlackOnBolt {
 //
-////  implementation 'com.slack.api:bolt:1.12.1'
-////  implementation 'com.slack.api:bolt-socket-mode:1.12.1'
-////  implementation 'javax.websocket:javax.websocket-api:1.1'
-////  implementation 'org.glassfish.tyrus.bundles:tyrus-standalone-client:1.17'
-//
 //  @Bean
 //  public App initSlackApp() throws Exception {
 //    App app = new App();
-//
-////    Map<Class<? extends Event>, BoltEventHandler<? extends Event>> qqq = Map.of(
-////        ReactionAddedEvent.class, (payload, ctx) -> apply(payload, ctx),
-////        MessageEvent.class, (payload, ctx) -> apply2(payload, ctx)
-////    );
 //
 //    // сообщение в тред за эмодзи
 //    app.event(ReactionAddedEvent.class, this::emodzi);
@@ -52,6 +42,10 @@
 //
 //    // показать модал форму с тригера
 //    app.globalShortcut("darby_play_id", this::modalForm);
+//    app.dialogSubmission("ryde-46e2b0", (req, ctx) -> {
+//      // Do something where
+//      return ctx.ack();
+//    });
 //
 //
 //    new SocketModeApp(app).start();
@@ -84,30 +78,46 @@
 //
 //  public Response modalForm(GlobalShortcutRequest req, GlobalShortcutContext ctx) throws SlackApiException, IOException {
 //    String modalJson = "{\n" +
-//        "  \"type\": \"modal\",\n" +
-//        "  \"callback_id\": \"modal-identifier\",\n" +
-//        "  \"title\": {\n" +
-//        "    \"type\": \"plain_text\",\n" +
-//        "    \"text\": \"Just a modal\"\n" +
-//        "  },\n" +
-//        "  \"blocks\": [\n" +
-//        "    {\n" +
-//        "      \"type\": \"section\",\n" +
-//        "      \"block_id\": \"section-identifier\",\n" +
-//        "      \"text\": {\n" +
-//        "        \"type\": \"mrkdwn\",\n" +
-//        "        \"text\": \"*Welcome* to ~my~ Block Kit _modal_!\"\n" +
-//        "      },\n" +
-//        "      \"accessory\": {\n" +
-//        "        \"type\": \"button\",\n" +
-//        "        \"text\": {\n" +
-//        "          \"type\": \"plain_text\",\n" +
-//        "          \"text\": \"Just a button\",\n" +
+//        "    \"callback_id\": \"ryde-46e2b0\",\n" +
+//        "    \"title\": \"Создать комнату\",\n" +
+//        "    \"submit_label\": \"Создать\",\n" +
+//        "    \"elements\": [\n" +
+//        "        {\n" +
+//        "            \"label\": \"Ссылка на портфель\",\n" +
+//        "            \"type\": \"text\",\n" +
+//        "            \"name\": \"my_name_1\"\n" +
 //        "        },\n" +
-//        "        \"action_id\": \"button-identifier\",\n" +
-//        "      }\n" +
-//        "    }\n" +
-//        "  ],\n" +
+//        "        {\n" +
+//        "            \"label\": \"Список задач\",\n" +
+//        "            \"type\": \"textarea\",\n" +
+//        "            \"name\": \"my_name_2\",\n" +
+//        "            \"hint\": \"на отдельных строчках\"\n" +
+//        "        },\n" +
+//        "        {\n" +
+//        "            \"label\": \"Выбрать шкалу\",\n" +
+//        "            \"type\": \"select\",\n" +
+//        "            \"name\": \"my_name_3\",\n" +
+//        "            \"options\": [\n" +
+//        "                {\n" +
+//        "                  \"label\": \"первый вариант: 1,2,3,4\",\n" +
+//        "                  \"value\": \"select1\"\n" +
+//        "                },\n" +
+//        "                {\n" +
+//        "                  \"label\": \"второй вариант 4,5,6,7\",\n" +
+//        "                  \"value\": \"select2\"\n" +
+//        "                },\n" +
+//        "                {\n" +
+//        "                  \"label\": \"своя шкала\",\n" +
+//        "                  \"value\": \"select3\"\n" +
+//        "                } \n" +
+//        "              ]\n" +
+//        "        },\n" +
+//        "        {\n" +
+//        "            \"label\": \"Своя шкала\",\n" +
+//        "            \"type\": \"text\",\n" +
+//        "            \"name\": \"my_name_4\"\n" +
+//        "        }\n" +
+//        "    ]\n" +
 //        "}";
 //
 //    DialogOpenResponse apiResponse = ctx.client().dialogOpen(r -> r
@@ -115,6 +125,7 @@
 //        .dialogAsString(modalJson));
 //    if (!apiResponse.isOk()) {
 //      System.out.println("chat.postMessage failed: " + apiResponse.getError());
+//      System.out.println(apiResponse.getResponseMetadata());
 //    }
 //
 //    return ctx.ack();
