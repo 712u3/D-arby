@@ -1,4 +1,4 @@
-package com.example.darby;
+package com.example.darby.deleteme;
 
 import com.example.darby.dao.MongoDao;
 import com.example.darby.documents.EstimationScale;
@@ -50,7 +50,7 @@ public class SlackOnBolt {
     this.mongoDao = mongoDao;
   }
 
-  @PostConstruct
+//  @PostConstruct
   public void initDataSourceProxyFactory() throws Exception {
     App app = new App();
 
@@ -86,7 +86,7 @@ public class SlackOnBolt {
     socketApp.start();
   }
 
-  @PreDestroy
+//  @PreDestroy
   public void shutdown() throws Exception {
     socketApp.stop();
   }
@@ -118,11 +118,11 @@ public class SlackOnBolt {
     String shkala = data.get("my_name_3");
 
     // надо сохранить в базу сущнсоть канал (чтоб потом айди знать) если у нас такого еще нет
-    SlackChannel slackChannel = mongoDao.upsert(new SlackChannel(channel.getId(), channel.getName()));
+    String slackChannelId = mongoDao.upsert(new SlackChannel(channel.getId(), channel.getName()));
     // надо сохранить в базу сущнсоть юзер (чтоб потом айди знать)
-    SlackUser slackUser = mongoDao.upsert(new SlackUser(user.getId(), user.getName()));
+    mongoDao.upsert(new SlackUser(user.getId(), user.getName()));
     // надо сохранить в базу сущнсоть шкала (если новая)
-    EstimationScale estimationScale = mongoDao.upsert(new EstimationScale(List.of(shkala.split(", "))));
+    String estimationScaleId = mongoDao.upsert(new EstimationScale(List.of(shkala.split(", "))));
 
     ChatPostMessageResponse message = ctx.client().chatPostMessage(r -> r
         .channel(channel.getId())
@@ -133,8 +133,8 @@ public class SlackOnBolt {
     var messageTs = message.getTs();
 
     // надо сохранить в базу сущнсоть комната
-    RoomLocation roomLocation = mongoDao.save(new RoomLocation(slackChannel.getId(), messageTs));
-    GameRoom gameRoom = mongoDao.save(new GameRoom(title, estimationScale.getId(), roomLocation.getId()));
+    RoomLocation roomLocation = mongoDao.save(new RoomLocation(slackChannelId, messageTs));
+    GameRoom gameRoom = mongoDao.save(new GameRoom(title, estimationScaleId, roomLocation.getId()));
     int index = 0;
     for(String zadacha : zadachi.split("\n")) {
       mongoDao.save(new Task(gameRoom.getId(), zadacha, index++));
