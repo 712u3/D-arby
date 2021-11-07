@@ -45,14 +45,14 @@ public class EventLoopConfig {
   @Bean
   @Qualifier("poolForPostToSlackApi")
   public LoopResources loopResources1() {
-    return b -> getNioEventLoopGroup("my-slackapi", 1);
+    return b -> getNioEventLoopGroup("my-slackapi", 3);
 //    return LoopResources.create("my-eventloop", 1, true);
   }
 
   @Bean
   @Qualifier("poolForWebSocket")
   public LoopResources loopResources2() {
-    return b -> getNioEventLoopGroup("my-websocket", 1);
+    return b -> getNioEventLoopGroup("my-websocket", 3);
   }
 
   private NioEventLoopGroup getNioEventLoopGroup(String poolName, int nThreads) {

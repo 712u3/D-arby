@@ -3,9 +3,6 @@ package com.example.darby.deleteme;
 import com.example.darby.dao.MongoDao;
 import com.example.darby.documents.EstimationScale;
 import com.example.darby.documents.GameRoom;
-import com.example.darby.documents.RoomLocation;
-import com.example.darby.documents.SlackChannel;
-import com.example.darby.documents.SlackUser;
 import com.example.darby.documents.Task;
 import com.slack.api.app_backend.dialogs.payload.DialogSubmissionPayload;
 import com.slack.api.app_backend.events.payload.EventsApiPayload;
@@ -27,8 +24,10 @@ import com.slack.api.model.event.MessageChangedEvent;
 import com.slack.api.model.event.ReactionAddedEvent;
 import com.slack.api.model.event.ReactionRemovedEvent;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import org.springframework.stereotype.Component;
@@ -50,7 +49,7 @@ public class SlackOnBolt {
     this.mongoDao = mongoDao;
   }
 
-//  @PostConstruct
+  @PostConstruct
   public void initDataSourceProxyFactory() throws Exception {
     App app = new App();
 
@@ -74,7 +73,7 @@ public class SlackOnBolt {
     });
 
     // показать модал форму с тригера
-    app.globalShortcut(CREATE_ROOM_MODAL, this::createRoomModal);
+    app.globalShortcut(CREATE_ROOM_MODAL, this::getRoomCreationModal);
     app.dialogSubmission(CREATE_ROOM_REQUEST, this::createRoomRequest);
     app.blockAction(START_GAME, this::startGame);
     app.blockAction(POLL_OPTION_1, this::pollEvent);
@@ -86,14 +85,14 @@ public class SlackOnBolt {
     socketApp.start();
   }
 
-//  @PreDestroy
+  @PreDestroy
   public void shutdown() throws Exception {
     socketApp.stop();
   }
 
 
 
-  public Response createRoomModal(GlobalShortcutRequest req, GlobalShortcutContext ctx) throws SlackApiException, IOException {
+  public Response getRoomCreationModal(GlobalShortcutRequest req, GlobalShortcutContext ctx) throws SlackApiException, IOException {
     //TODO подтянуть последнюю использовавшуюся шкалу в этом канале
     String modalJson = makeCreateRoomModalJson();
 
@@ -117,12 +116,11 @@ public class SlackOnBolt {
     String zadachi = data.get("my_name_2");
     String shkala = data.get("my_name_3");
 
-    // надо сохранить в базу сущнсоть канал (чтоб потом айди знать) если у нас такого еще нет
-    String slackChannelId = mongoDao.upsert(new SlackChannel(channel.getId(), channel.getName()));
-    // надо сохранить в базу сущнсоть юзер (чтоб потом айди знать)
-    mongoDao.upsert(new SlackUser(user.getId(), user.getName()));
-    // надо сохранить в базу сущнсоть шкала (если новая)
-    String estimationScaleId = mongoDao.upsert(new EstimationScale(List.of(shkala.split(", "))));
+    String estimationScaleId = mongoDao.upsert(new EstimationScale(List.of(data.get("my_name_4").split("[\\s,]+"))));
+
+    if (true) {
+      return ctx.ack();
+    }
 
     ChatPostMessageResponse message = ctx.client().chatPostMessage(r -> r
         .channel(channel.getId())
@@ -133,12 +131,11 @@ public class SlackOnBolt {
     var messageTs = message.getTs();
 
     // надо сохранить в базу сущнсоть комната
-    RoomLocation roomLocation = mongoDao.save(new RoomLocation(slackChannelId, messageTs));
-    GameRoom gameRoom = mongoDao.save(new GameRoom(title, estimationScaleId, roomLocation.getId()));
-    int index = 0;
-    for(String zadacha : zadachi.split("\n")) {
-      mongoDao.save(new Task(gameRoom.getId(), zadacha, index++));
-    }
+    List<Task> tasks = Arrays.stream(zadachi.split(", "))
+        .map(st -> new Task(st, List.of()))
+        .collect(Collectors.toList());
+    GameRoom gameRoom = new GameRoom(title, estimationScaleId, channel.getId(), messageTs, tasks);
+    GameRoom result00 = mongoDao.save(gameRoom);
 
     var blocks = makePlayButtonJson();
 
@@ -160,6 +157,8 @@ public class SlackOnBolt {
     var threadId = req.getPayload().getMessage().getThreadTs();
     var user = req.getPayload().getUser();
 
+    // если таймеры заводить, то тут их надо обновить
+
     var updBlocks = playButtonPressedJson(user.getName());
     var updMessage = ctx.client().chatUpdate(r -> r
         .channel(channelId)
@@ -171,6 +170,11 @@ public class SlackOnBolt {
       System.out.println("chat.postMessage failed: " + updMessage.getError());
     }
 
+    // нужна первая задача и список оценок
+    // хотелось бы найти локацию по threadId
+    // джойн комната по комнатаайди
+    // джойн задачи по комнатаайди
+    mongoDao.findTaskByThreadId();
     var blocks = pollJson(List.of());
 
     ChatPostMessageResponse message = ctx.client().chatPostMessage(r -> r

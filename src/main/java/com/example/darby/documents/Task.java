@@ -1,37 +1,16 @@
 package com.example.darby.documents;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
 
-@Document
+import java.util.List;
+
 public class Task {
 
-  @Id
-  private String id;
-  private String gameRoomId;
   private String title;
-  private Integer order;
+  private List<TaskEstimation> estimations;
 
-  public Task(String gameRoomId, String title, Integer order) {
-    this.gameRoomId = gameRoomId;
+  public Task(String title, List<TaskEstimation> estimations) {
     this.title = title;
-    this.order = order;
-  }
-
-  public String getId() {
-    return id;
-  }
-
-  public void setId(String id) {
-    this.id = id;
-  }
-
-  public String getGameRoomId() {
-    return gameRoomId;
-  }
-
-  public void setGameRoomId(String gameRoomId) {
-    this.gameRoomId = gameRoomId;
+    this.estimations = estimations;
   }
 
   public String getTitle() {
@@ -42,11 +21,11 @@ public class Task {
     this.title = title;
   }
 
-  public Integer getOrder() {
-    return order;
+  public List<TaskEstimation> getEstimations() {
+    return estimations;
   }
 
-  public void setOrder(Integer order) {
-    this.order = order;
+  public void setEstimations(List<TaskEstimation> estimations) {
+    this.estimations = estimations;
   }
 }

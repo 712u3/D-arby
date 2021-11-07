@@ -1,10 +1,10 @@
 package com.example.darby.dao;
 
 import com.example.darby.documents.EstimationScale;
-import com.example.darby.documents.RoomLocation;
-import com.example.darby.documents.SlackChannel;
-import com.example.darby.documents.SlackUser;
+import com.example.darby.documents.GameRoom;
+import com.example.darby.documents.Task;
 import com.mongodb.client.result.UpdateResult;
+import java.time.Duration;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -23,71 +23,48 @@ public class MongoDao {
     Query findQuery = new Query();
     Criteria criteria = Criteria.where("marks").is(estimationScale.getMarks());
     findQuery.addCriteria(criteria);
-    EstimationScale result1 = reactiveMongoTemplate.find(findQuery, EstimationScale.class).blockFirst();
-    if (result1 != null) {
-      return result1.getId();
+
+    reactiveMongoTemplate.createCollection(EstimationScale.TABLE_NAME).block();
+
+    var estimations = reactiveMongoTemplate.findAll(EstimationScale.class, EstimationScale.TABLE_NAME)
+        .collectList().block();
+
+    if (estimations != null) {
+      return estimations.get(0).getId();
     }
-
-    Query upsertQuery = new Query();
-    upsertQuery.addCriteria(criteria);
-
-    Update update = new Update();
-    update.set("marks", estimationScale.getMarks());
-
-    UpdateResult result2 = reactiveMongoTemplate.upsert(upsertQuery, update, EstimationScale.class).block();
-    if (result2.getMatchedCount() > 0) {
-      return reactiveMongoTemplate.find(findQuery, EstimationScale.class).blockFirst().getId();
-    }
-    return result2.getUpsertedId().asObjectId().getValue().toHexString();
+    // race condition
+    // https://github.com/spring-projects/spring-data-mongodb/issues/2452
+    return reactiveMongoTemplate.save(estimationScale, EstimationScale.TABLE_NAME).block().getId();
   }
 
-  public String upsert(SlackUser slackUser) {
-    Query findQuery = new Query();
-    Criteria criteria = Criteria.where("slack_id").is(slackUser.getSlackId());
-    findQuery.addCriteria(criteria);
-    SlackUser result1 = reactiveMongoTemplate.find(findQuery, SlackUser.class).blockFirst();
-    if (result1 != null) {
-      return result1.getId();
-    }
-
-    Query upsertQuery = new Query();
-    upsertQuery.addCriteria(criteria);
-
-    Update update = new Update();
-    update.set("slack_id", slackUser.getSlackId());
-    update.set("name", slackUser.getName());
-
-    UpdateResult result2 = reactiveMongoTemplate.upsert(upsertQuery, update, SlackUser.class).block();
-    if (result2.getMatchedCount() > 0) {
-      return reactiveMongoTemplate.find(findQuery, SlackUser.class).blockFirst().getId();
-    }
-    return result2.getUpsertedId().asObjectId().getValue().toHexString();
-  }
-
-  public String upsert(SlackChannel slackChannel) {
-    Query findQuery = new Query();
-    Criteria criteria = Criteria.where("slack_id").is(slackChannel.getSlackId());
-    findQuery.addCriteria(criteria);
-    SlackChannel result1 = reactiveMongoTemplate.find(findQuery, SlackChannel.class).blockFirst();
-    if (result1 != null) {
-      return result1.getId();
-    }
-
-    Query upsertQuery = new Query();
-    upsertQuery.addCriteria(criteria);
-
-    Update update = new Update();
-    update.set("slack_id", slackChannel.getSlackId());
-    update.set("name", slackChannel.getName());
-
-    UpdateResult result2 = reactiveMongoTemplate.upsert(upsertQuery, update, SlackChannel.class).block();
-    if (result2.getMatchedCount() > 0) {
-      return reactiveMongoTemplate.find(findQuery, SlackChannel.class).blockFirst().getId();
-    }
-    return result2.getUpsertedId().asObjectId().getValue().toHexString();
-  }
 
   public <T> T save(T entity) {
-    return null;
+    return reactiveMongoTemplate.save(entity).block();
+  }
+
+  public void findTaskByThreadId() {
+//    // походу как даун  сначала залесекчу румлокатион
+//    // потом рум
+//    // потом таску
+//    String threadId = "";
+//    Query roomLocQuery = new Query();
+//    Criteria criteria1 = Criteria.where("thread_id").is(threadId);
+//    roomLocQuery.addCriteria(criteria1);
+//    RoomLocation roomLocation = reactiveMongoTemplate.find(roomLocQuery, RoomLocation.class).blockFirst();
+//
+//
+//    Query roomQuery = new Query();
+//    Criteria criteria2 = Criteria.where("room_location_id").is(roomLocation.getId());
+//    roomQuery.addCriteria(criteria2);
+//    GameRoom gameRoom = reactiveMongoTemplate.find(roomQuery, GameRoom.class).blockFirst();
+//
+//
+//    Query taskQuery = new Query();
+//    // нужны колонки время старта/завершения  чтобы селектили те которые еще не завершены
+//    Criteria criteria3 = Criteria.where("game_room_id").is(gameRoom.getId());
+//    taskQuery.addCriteria(criteria3);
+//    Task task = reactiveMongoTemplate.find(taskQuery, Task.class).blockFirst();
+
+
   }
 }
