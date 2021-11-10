@@ -43,6 +43,7 @@ public class SlackOnBolt {
   private static final String POLL_OPTION_1 = "actionId-31231";
   private static final String POLL_END = "actionId-1212";
   private static final String POLL_END2 = "plain_text_input-action452524";
+  private static final String POLL_END3 = "jirabutton-action452524";
 
   private SocketModeApp socketApp;
   private final MongoDao mongoDao;
@@ -86,6 +87,7 @@ public class SlackOnBolt {
     app.blockAction(Pattern.compile("^" + POLL_OPTION_1 + "-\\w+" + "$"), this::pollEvent);
     app.blockAction(POLL_END, this::pollEnd);
     app.blockAction(POLL_END2, this::pollEnd2);
+    app.blockAction(POLL_END3, this::jiraPost);
 
     socketApp = new SocketModeApp(app);
     socketApp.start();
@@ -155,7 +157,7 @@ public class SlackOnBolt {
   private Response nextTask(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
     var channelId = req.getPayload().getContainer().getChannelId();
     String gameRoomId = req.getPayload().getActions().get(0).getValue();
-    var messageTs = req.getPayload().getContainer().getMessageTs();
+    var messageId = req.getPayload().getContainer().getMessageTs();
     var threadId = req.getPayload().getMessage().getThreadTs();
     var user = req.getPayload().getUser();
 
@@ -164,23 +166,14 @@ public class SlackOnBolt {
     Task nextTask = gameRoom.getNextTask().get();
 
     var updBlocks = pollJson1(user.getUsername(), gameRoomId, nextTask.getTitle(), estimationScale.getMarks());
-
-    var updMessage = ctx.client().chatUpdate(r -> r
-        .channel(channelId)
-        .ts(messageTs)
-        .text("голосование")
-        .blocksAsString(updBlocks)
-    );
-    if (!updMessage.isOk()) {
-      System.out.println("chat.postMessage failed: " + updMessage.getError());
-    }
+    updateMessage(ctx.client(), channelId, messageId, "голосование", updBlocks);
 
     return ctx.ack();
   }
 
   private Response pollEvent(BlockActionRequest req, ActionContext ctx) throws SlackApiException, IOException {
     var channel = req.getPayload().getChannel();
-    var messageTs = req.getPayload().getMessage().getTs();
+    var messageId = req.getPayload().getMessage().getTs();
     var threadId = req.getPayload().getMessage().getThreadTs();
     var user = req.getPayload().getUser();
     var selected = req.getPayload().getActions().get(0).getValue();
@@ -208,22 +201,14 @@ public class SlackOnBolt {
     users.add(user.getUsername());
 
     var updBlocks = pollJson2(gameRoom.getId(), nextTask.getTitle(), estimationScale.getMarks(), users);
-    var updMessage = ctx.client().chatUpdate(r -> r
-        .channel(channel.getId())
-        .ts(messageTs)
-        .text("голосование")
-        .blocksAsString(updBlocks)
-    );
-    if (!updMessage.isOk()) {
-      System.out.println("chat.postMessage failed: " + updMessage.getError());
-    }
+    updateMessage(ctx.client(), channel.getId(), messageId, "голосование", updBlocks);
 
     return ctx.ack();
   }
 
   private Response pollEnd(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
     var channel = req.getPayload().getChannel();
-    var messageTs = req.getPayload().getMessage().getTs();
+    var messageId = req.getPayload().getMessage().getTs();
     var threadId = req.getPayload().getMessage().getThreadTs();
     var user = req.getPayload().getUser();
     var gameRoomId = req.getPayload().getActions().get(0).getValue();
@@ -232,22 +217,14 @@ public class SlackOnBolt {
     Task nextTask = gameRoom.getNextTask().get();
 
     var blocks = makePollEndJson(user.getUsername(), nextTask.getEstimations());
-    var updMessage = ctx.client().chatUpdate(r -> r
-        .channel(channel.getId())
-        .ts(messageTs)
-        .text("голосование")
-        .blocksAsString(blocks)
-    );
-    if (!updMessage.isOk()) {
-      System.out.println("chat.postMessage failed: " + updMessage.getError());
-    }
+    updateMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
 
     return ctx.ack();
   }
 
   private Response pollEnd2(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
     var channel = req.getPayload().getChannel();
-    var messageTs = req.getPayload().getMessage().getTs();
+    var messageId = req.getPayload().getMessage().getTs();
     var threadId = req.getPayload().getMessage().getThreadTs();
     var user = req.getPayload().getUser();
     var finalMark = req.getPayload().getActions().get(0).getValue();
@@ -259,21 +236,21 @@ public class SlackOnBolt {
     mongoDao.save(gameRoom);
 
     var blocks = makePollEndJson2(user.getUsername(), nextTask.getTitle(), nextTask.getEstimations(), finalMark);
-    var updMessage = ctx.client().chatUpdate(r -> r
-        .channel(channel.getId())
-        .ts(messageTs)
-        .text("голосование")
-        .blocksAsString(blocks)
-    );
-    if (!updMessage.isOk()) {
-      System.out.println("chat.postMessage failed: " + updMessage.getError());
+    updateMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
+
+    if (gameRoom.getNextTask().isPresent()) {
+      postNextTaskButton(ctx.client(), gameRoom.getId(), channel.getId(), threadId);
+    } else {
+      var blocks2 = makeRoomEndJson(gameRoom);
+      ChatPostMessageResponse message2 = ctx.client().chatPostMessage(r -> r
+          .channel(channel.getId())
+          .threadTs(threadId)
+          .text("результаты")
+          .blocksAsString(blocks2));
+      if (!message2.isOk()) {
+        System.out.println("chat.postMessage failed: " + message2.getError());
+      }
     }
-
-    // если это была последняя задача то здесь будем постить не кнопку а результаты портфеля
-
-    // + новое сообщение с кнопкой следующая задача, которое будем апдейтить
-    postNextTaskButton(ctx.client(), gameRoom.getId(), channel.getId(), threadId);
-
     return ctx.ack();
   }
 
@@ -287,6 +264,35 @@ public class SlackOnBolt {
     if (!message2.isOk()) {
       System.out.println("chat.postMessage failed: " + message2.getError());
     }
+  }
+
+  private void updateMessage(MethodsClient client, String channelId, String messageId, String title, String blocks) throws SlackApiException, IOException {
+    var updMessage = client.chatUpdate(r -> r
+        .channel(channelId)
+        .ts(messageId)
+        .text(title)
+        .blocksAsString(blocks)
+    );
+    if (!updMessage.isOk()) {
+      System.out.println("chat.postMessage failed: " + updMessage.getError());
+    }
+  }
+
+  private Response jiraPost(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
+    var channel = req.getPayload().getChannel();
+    var messageId = req.getPayload().getMessage().getTs();
+    var threadId = req.getPayload().getMessage().getThreadTs();
+    var user = req.getPayload().getUser();
+    var finalMark = req.getPayload().getActions().get(0).getValue();
+
+    GameRoom gameRoom = mongoDao.getGameRoomByThreadId(threadId);
+
+    var blocks = jiraDoneJson(gameRoom, user.getUsername(), "portfolioLink");
+    updateMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
+
+    // + пост в жиру
+
+    return ctx.ack();
   }
 
 
@@ -337,11 +343,64 @@ public class SlackOnBolt {
 
 
 
+  public String jiraDoneJson(GameRoom gameRoom, String userName, String portfolioLink) {
+    String roomResults = gameRoom.getTasks().stream().map(t -> t.getTitle() + " - " + t.getFinalMark()).collect(Collectors.joining("\n"));
+
+    return """
+        [
+          {
+            "type": "section",
+            "text": {
+              "type": "plain_text",
+              "text": "Результаты:\\n%s",
+              "emoji": true
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "plain_text",
+              "text": "(%s)\\n%s",
+              "emoji": true
+            }
+          }
+        ]
+        """.formatted(roomResults, userName, portfolioLink);
+  }
 
 
 
+  public String makeRoomEndJson(GameRoom gameRoom) {
+    String roomResults = gameRoom.getTasks().stream().map(t -> t.getTitle() + " - " + t.getFinalMark()).collect(Collectors.joining("\n"));
 
-
+    return """
+        [
+          {
+            "type": "section",
+            "text": {
+              "type": "plain_text",
+              "text": "Результаты:\\n%s",
+              "emoji": true
+            }
+          },
+          {
+            "type": "actions",
+            "elements": [
+              {
+                "type": "button",
+                "text": {
+                  "type": "plain_text",
+                  "text": "Запостить в жиру",
+                  "emoji": true
+                },
+                "value": "%s",
+                "action_id": "%s"
+              }
+            ]
+          }
+        ]
+        """.formatted(roomResults, gameRoom.getId(), POLL_END3);
+  }
 
   public String makePollEndJson2(String userName, String taskTitle, List<TaskEstimation> estimations, String finalMark) {
     String pollResults = estimations.stream().map(e -> e.getUserName() + " " + e.getMark()).collect(Collectors.joining("\n"));
@@ -612,7 +671,7 @@ public class SlackOnBolt {
                 "type": "button",
                 "text": {
                   "type": "plain_text",
-                  "text": "Закончить голосование",
+                  "text": "Завершить голосование",
                   "emoji": true
                 },
                 "value": "%s",
