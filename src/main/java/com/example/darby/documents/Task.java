@@ -7,6 +7,7 @@ public class Task {
 
   private String title;
   private List<TaskEstimation> estimations;
+  private String finalMark;
 
   public Task(String title, List<TaskEstimation> estimations) {
     this.title = title;
@@ -27,5 +28,13 @@ public class Task {
 
   public void setEstimations(List<TaskEstimation> estimations) {
     this.estimations = estimations;
+  }
+
+  public String getFinalMark() {
+    return finalMark;
+  }
+
+  public void setFinalMark(String finalMark) {
+    this.finalMark = finalMark;
   }
 }

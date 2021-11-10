@@ -3,13 +3,17 @@ package com.example.darby.dao;
 import com.example.darby.documents.EstimationScale;
 import com.example.darby.documents.GameRoom;
 import com.example.darby.documents.Task;
-import com.mongodb.client.result.UpdateResult;
-import java.time.Duration;
+import com.example.darby.documents.TaskEstimation;
+import java.lang.reflect.InvocationTargetException;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Repository;
+import org.apache.commons.beanutils.PropertyUtils;
 
 @Repository
 public class MongoDao {
@@ -19,22 +23,39 @@ public class MongoDao {
     this.reactiveMongoTemplate = reactiveMongoTemplate;
   }
 
-  public String upsert(EstimationScale estimationScale) {
+  public List<EstimationScale> getAllEstimationScales(String userId) {
+    Query findQuery1 = new Query();
+    Criteria criteria1 = Criteria.where("userId").is(userId);
+    findQuery1.addCriteria(criteria1);
+
+    var lastGameRoom = reactiveMongoTemplate.find(findQuery1, GameRoom.class).blockLast();
+    String lastEstimationScaleId = null;
+    if (lastGameRoom != null) {
+      lastEstimationScaleId = lastGameRoom.getEstimationScaleId();
+    }
+
+    Query findQuery = new Query();
+    Criteria criteria = new Criteria().orOperator(
+        Criteria.where("primary").is(true),
+        Criteria.where("id").is(lastEstimationScaleId)
+    );
+    findQuery.addCriteria(criteria);
+
+    return reactiveMongoTemplate.find(findQuery, EstimationScale.class).collectList().block();
+  }
+
+  public String getOrSave(EstimationScale estimationScale) {
     Query findQuery = new Query();
     Criteria criteria = Criteria.where("marks").is(estimationScale.getMarks());
     findQuery.addCriteria(criteria);
 
-    reactiveMongoTemplate.createCollection(EstimationScale.TABLE_NAME).block();
+    var estimationsCale = reactiveMongoTemplate.find(findQuery, EstimationScale.class).blockFirst();
 
-    var estimations = reactiveMongoTemplate.findAll(EstimationScale.class, EstimationScale.TABLE_NAME)
-        .collectList().block();
-
-    if (estimations != null) {
-      return estimations.get(0).getId();
+    if (estimationsCale != null) {
+      return estimationsCale.getId();
     }
     // race condition
-    // https://github.com/spring-projects/spring-data-mongodb/issues/2452
-    return reactiveMongoTemplate.save(estimationScale, EstimationScale.TABLE_NAME).block().getId();
+    return reactiveMongoTemplate.save(estimationScale).block().getId();
   }
 
 
@@ -42,29 +63,27 @@ public class MongoDao {
     return reactiveMongoTemplate.save(entity).block();
   }
 
-  public void findTaskByThreadId() {
-//    // походу как даун  сначала залесекчу румлокатион
-//    // потом рум
-//    // потом таску
-//    String threadId = "";
-//    Query roomLocQuery = new Query();
-//    Criteria criteria1 = Criteria.where("thread_id").is(threadId);
-//    roomLocQuery.addCriteria(criteria1);
-//    RoomLocation roomLocation = reactiveMongoTemplate.find(roomLocQuery, RoomLocation.class).blockFirst();
-//
-//
-//    Query roomQuery = new Query();
-//    Criteria criteria2 = Criteria.where("room_location_id").is(roomLocation.getId());
-//    roomQuery.addCriteria(criteria2);
-//    GameRoom gameRoom = reactiveMongoTemplate.find(roomQuery, GameRoom.class).blockFirst();
-//
-//
-//    Query taskQuery = new Query();
-//    // нужны колонки время старта/завершения  чтобы селектили те которые еще не завершены
-//    Criteria criteria3 = Criteria.where("game_room_id").is(gameRoom.getId());
-//    taskQuery.addCriteria(criteria3);
-//    Task task = reactiveMongoTemplate.find(taskQuery, Task.class).blockFirst();
+  public GameRoom getGameRoom(String gameRoomId) {
+    Query findQuery = new Query();
+    Criteria criteria = Criteria.where("id").is(gameRoomId);
+    findQuery.addCriteria(criteria);
 
+    return reactiveMongoTemplate.find(findQuery, GameRoom.class).blockFirst();
+  }
 
+  public GameRoom getGameRoomByThreadId(String threadId) {
+    Query findQuery = new Query();
+    Criteria criteria = Criteria.where("threadId").is(threadId);
+    findQuery.addCriteria(criteria);
+
+    return reactiveMongoTemplate.find(findQuery, GameRoom.class).blockFirst();
+  }
+
+  public EstimationScale getEstimationScale(String estimationScaleId) {
+    Query findQuery = new Query();
+    Criteria criteria = Criteria.where("id").is(estimationScaleId);
+    findQuery.addCriteria(criteria);
+
+    return reactiveMongoTemplate.find(findQuery, EstimationScale.class).blockFirst();
   }
 }

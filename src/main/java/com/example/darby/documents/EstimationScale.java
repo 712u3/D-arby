@@ -6,14 +6,17 @@ import org.springframework.data.mongodb.core.mapping.Document;
 
 @Document
 public class EstimationScale {
-  public static final String TABLE_NAME = "estimation_scale";
 
   @Id
   private String id;
+  private String name;
   private List<String> marks;
+  private Boolean primary;
 
-  public EstimationScale(List<String> marks) {
+  public EstimationScale(String name, List<String> marks) {
+    this.name = name;
     this.marks = marks;
+    this.primary = false;
   }
 
   public String getId() {
@@ -24,11 +27,27 @@ public class EstimationScale {
     this.id = id;
   }
 
+  public String getName() {
+    return name;
+  }
+
+  public void setName(String name) {
+    this.name = name;
+  }
+
   public List<String> getMarks() {
     return marks;
   }
 
   public void setMarks(List<String> marks) {
     this.marks = marks;
+  }
+
+  public Boolean getPrimary() {
+    return primary;
+  }
+
+  public void setPrimary(Boolean primary) {
+    this.primary = primary;
   }
 }

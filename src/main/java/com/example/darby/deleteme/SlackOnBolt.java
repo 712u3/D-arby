@@ -4,6 +4,7 @@ import com.example.darby.dao.MongoDao;
 import com.example.darby.documents.EstimationScale;
 import com.example.darby.documents.GameRoom;
 import com.example.darby.documents.Task;
+import com.example.darby.documents.TaskEstimation;
 import com.slack.api.app_backend.dialogs.payload.DialogSubmissionPayload;
 import com.slack.api.app_backend.events.payload.EventsApiPayload;
 import com.slack.api.bolt.App;
@@ -16,6 +17,7 @@ import com.slack.api.bolt.request.builtin.DialogSubmissionRequest;
 import com.slack.api.bolt.request.builtin.GlobalShortcutRequest;
 import com.slack.api.bolt.response.Response;
 import com.slack.api.bolt.socket_mode.SocketModeApp;
+import com.slack.api.methods.MethodsClient;
 import com.slack.api.methods.SlackApiException;
 import com.slack.api.methods.response.chat.ChatPostEphemeralResponse;
 import com.slack.api.methods.response.chat.ChatPostMessageResponse;
@@ -24,23 +26,23 @@ import com.slack.api.model.event.MessageChangedEvent;
 import com.slack.api.model.event.ReactionAddedEvent;
 import com.slack.api.model.event.ReactionRemovedEvent;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
 public class SlackOnBolt {
   private static final String CREATE_ROOM_MODAL = "darby_play_id";
   private static final String CREATE_ROOM_REQUEST = "create_room_request";
-  private static final String START_GAME = "start_game_id";
+  private static final String NEXT_TASK = "start_game_id";
   private static final String POLL_OPTION_1 = "actionId-31231";
-  private static final String POLL_OPTION_2 = "actionId-222";
-  private static final String POLL_OPTION_3 = "actionId-111";
   private static final String POLL_END = "actionId-1212";
+  private static final String POLL_END2 = "plain_text_input-action452524";
 
   private SocketModeApp socketApp;
   private final MongoDao mongoDao;
@@ -49,7 +51,12 @@ public class SlackOnBolt {
     this.mongoDao = mongoDao;
   }
 
-  @PostConstruct
+  @Scheduled(initialDelay = 1000, fixedDelay=Long.MAX_VALUE)
+  public void init() throws Exception {
+    initDataSourceProxyFactory();
+  }
+
+//  @PostConstruct
   public void initDataSourceProxyFactory() throws Exception {
     App app = new App();
 
@@ -75,11 +82,10 @@ public class SlackOnBolt {
     // показать модал форму с тригера
     app.globalShortcut(CREATE_ROOM_MODAL, this::getRoomCreationModal);
     app.dialogSubmission(CREATE_ROOM_REQUEST, this::createRoomRequest);
-    app.blockAction(START_GAME, this::startGame);
-    app.blockAction(POLL_OPTION_1, this::pollEvent);
-    app.blockAction(POLL_OPTION_2, this::pollEvent);
-    app.blockAction(POLL_OPTION_3, this::pollEvent);
-    app.blockAction(POLL_END, this::pollEvent);
+    app.blockAction(NEXT_TASK, this::nextTask);
+    app.blockAction(Pattern.compile("^" + POLL_OPTION_1 + "-\\w+" + "$"), this::pollEvent);
+    app.blockAction(POLL_END, this::pollEnd);
+    app.blockAction(POLL_END2, this::pollEnd2);
 
     socketApp = new SocketModeApp(app);
     socketApp.start();
@@ -91,10 +97,10 @@ public class SlackOnBolt {
   }
 
 
-
+  // просто показываем модалку
   public Response getRoomCreationModal(GlobalShortcutRequest req, GlobalShortcutContext ctx) throws SlackApiException, IOException {
-    //TODO подтянуть последнюю использовавшуюся шкалу в этом канале
-    String modalJson = makeCreateRoomModalJson();
+    List<EstimationScale> estimationScales = mongoDao.getAllEstimationScales(req.getPayload().getUser().getId());
+    String modalJson = makeCreateRoomModalJson(estimationScales);
 
     DialogOpenResponse apiResponse = ctx.client().dialogOpen(r -> r
         .triggerId(req.getPayload().getTriggerId())
@@ -107,101 +113,105 @@ public class SlackOnBolt {
     return ctx.ack();
   }
 
-
+  // реквест заполненной модалки
   private Response createRoomRequest(DialogSubmissionRequest req, DialogSubmissionContext ctx) throws SlackApiException, IOException {
     DialogSubmissionPayload.Channel channel = req.getPayload().getChannel();
     DialogSubmissionPayload.User user = req.getPayload().getUser();
     Map<String, String> data = req.getPayload().getSubmission();
     String title = data.get("my_name_1");
-    String zadachi = data.get("my_name_2");
-    String shkala = data.get("my_name_3");
+    String tasksText = data.get("my_name_2");
+    String estimationScaleId = data.get("my_name_3");
 
-    String estimationScaleId = mongoDao.upsert(new EstimationScale(List.of(data.get("my_name_4").split("[\\s,]+"))));
-
-    if (true) {
-      return ctx.ack();
+    if ("new_scale".equals(estimationScaleId)) {
+      EstimationScale estimationScale = new EstimationScale(
+          "Своя шкала",
+          List.of(data.get("my_name_4").split("[\\s,]+"))
+      );
+      estimationScaleId = mongoDao.getOrSave(estimationScale);
     }
 
+    // постим сообщение в треде которого будет весь движ
     ChatPostMessageResponse message = ctx.client().chatPostMessage(r -> r
         .channel(channel.getId())
         .text("тредик для оценки " + title));
     if (!message.isOk()) {
       System.out.println("chat.postMessage failed: " + message.getError());
     }
-    var messageTs = message.getTs();
+    var threadId = message.getTs();
 
-    // надо сохранить в базу сущнсоть комната
-    List<Task> tasks = Arrays.stream(zadachi.split(", "))
-        .map(st -> new Task(st, List.of()))
+    List<Task> tasks = tasksText.lines()
+        .map(taskTitle -> new Task(taskTitle, List.of()))
         .collect(Collectors.toList());
-    GameRoom gameRoom = new GameRoom(title, estimationScaleId, channel.getId(), messageTs, tasks);
-    GameRoom result00 = mongoDao.save(gameRoom);
+    GameRoom gameRoom = new GameRoom(title, estimationScaleId, user.getId(), channel.getId(), threadId, tasks);
+    String gameRoomId = mongoDao.save(gameRoom).getId();
 
-    var blocks = makePlayButtonJson();
-
-    ChatPostMessageResponse message2 = ctx.client().chatPostMessage(r -> r
-        .channel(channel.getId())
-        .threadTs(messageTs)
-        .text("начать игру")
-        .blocksAsString(blocks));
-    if (!message2.isOk()) {
-      System.out.println("chat.postMessage failed: " + message2.getError());
-    }
+    // постим в тред первое сообщение - кнопка "следующая задача"
+    postNextTaskButton(ctx.client(), gameRoomId, channel.getId(), threadId);
 
     return ctx.ack();
   }
 
-  private Response startGame(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
+  // кто-то нажал на кнопку следующая задача
+  private Response nextTask(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
     var channelId = req.getPayload().getContainer().getChannelId();
+    String gameRoomId = req.getPayload().getActions().get(0).getValue();
     var messageTs = req.getPayload().getContainer().getMessageTs();
     var threadId = req.getPayload().getMessage().getThreadTs();
     var user = req.getPayload().getUser();
 
-    // если таймеры заводить, то тут их надо обновить
+    GameRoom gameRoom = mongoDao.getGameRoom(gameRoomId);
+    EstimationScale estimationScale = mongoDao.getEstimationScale(gameRoom.getEstimationScaleId());
+    Task nextTask = gameRoom.getNextTask().get();
 
-    var updBlocks = playButtonPressedJson(user.getName());
+    var updBlocks = pollJson1(user.getUsername(), gameRoomId, nextTask.getTitle(), estimationScale.getMarks());
+
     var updMessage = ctx.client().chatUpdate(r -> r
         .channel(channelId)
         .ts(messageTs)
-        .text("начинает")
+        .text("голосование")
         .blocksAsString(updBlocks)
     );
     if (!updMessage.isOk()) {
       System.out.println("chat.postMessage failed: " + updMessage.getError());
-    }
-
-    // нужна первая задача и список оценок
-    // хотелось бы найти локацию по threadId
-    // джойн комната по комнатаайди
-    // джойн задачи по комнатаайди
-    mongoDao.findTaskByThreadId();
-    var blocks = pollJson(List.of());
-
-    ChatPostMessageResponse message = ctx.client().chatPostMessage(r -> r
-        .channel(channelId)
-        .threadTs(threadId)
-        .text("голосование")
-        .blocksAsString(blocks));
-    if (!message.isOk()) {
-      System.out.println("chat.postMessage failed: " + message.getError());
-      System.out.println(message.getResponseMetadata());
     }
 
     return ctx.ack();
   }
 
-  private Response pollEvent(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
+  private Response pollEvent(BlockActionRequest req, ActionContext ctx) throws SlackApiException, IOException {
     var channel = req.getPayload().getChannel();
     var messageTs = req.getPayload().getMessage().getTs();
     var threadId = req.getPayload().getMessage().getThreadTs();
     var user = req.getPayload().getUser();
-    var selected = req.getPayload().getActions().get(0).getSelectedOption();
+    var selected = req.getPayload().getActions().get(0).getValue();
 
-    var updBlocks = pollJson(List.of(user.getName()));
+
+    GameRoom gameRoom = mongoDao.getGameRoomByThreadId(threadId);
+    EstimationScale estimationScale = mongoDao.getEstimationScale(gameRoom.getEstimationScaleId());
+    Task nextTask = gameRoom.getNextTask().get();
+
+    // race condition?
+    Optional<TaskEstimation> lastEstimation = nextTask.getEstimations().stream()
+        .filter(e -> e.getUserName().equals(user.getUsername()))
+        .findFirst();
+    if (lastEstimation.isEmpty()) {
+      nextTask.getEstimations().add(new TaskEstimation(user.getUsername(), selected));
+    } else {
+      lastEstimation.get().setMark(selected);
+    }
+    mongoDao.save(gameRoom);
+
+    List<String> users = nextTask.getEstimations().stream()
+        .map(TaskEstimation::getUserName)
+        .filter(userName -> !userName.equals(user.getUsername()))
+        .collect(Collectors.toList());
+    users.add(user.getUsername());
+
+    var updBlocks = pollJson2(gameRoom.getId(), nextTask.getTitle(), estimationScale.getMarks(), users);
     var updMessage = ctx.client().chatUpdate(r -> r
         .channel(channel.getId())
         .ts(messageTs)
-        .text("проголосовал")
+        .text("голосование")
         .blocksAsString(updBlocks)
     );
     if (!updMessage.isOk()) {
@@ -209,6 +219,74 @@ public class SlackOnBolt {
     }
 
     return ctx.ack();
+  }
+
+  private Response pollEnd(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
+    var channel = req.getPayload().getChannel();
+    var messageTs = req.getPayload().getMessage().getTs();
+    var threadId = req.getPayload().getMessage().getThreadTs();
+    var user = req.getPayload().getUser();
+    var gameRoomId = req.getPayload().getActions().get(0).getValue();
+
+    GameRoom gameRoom = mongoDao.getGameRoom(gameRoomId);
+    Task nextTask = gameRoom.getNextTask().get();
+
+    var blocks = makePollEndJson(user.getUsername(), nextTask.getEstimations());
+    var updMessage = ctx.client().chatUpdate(r -> r
+        .channel(channel.getId())
+        .ts(messageTs)
+        .text("голосование")
+        .blocksAsString(blocks)
+    );
+    if (!updMessage.isOk()) {
+      System.out.println("chat.postMessage failed: " + updMessage.getError());
+    }
+
+    return ctx.ack();
+  }
+
+  private Response pollEnd2(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
+    var channel = req.getPayload().getChannel();
+    var messageTs = req.getPayload().getMessage().getTs();
+    var threadId = req.getPayload().getMessage().getThreadTs();
+    var user = req.getPayload().getUser();
+    var finalMark = req.getPayload().getActions().get(0).getValue();
+
+    GameRoom gameRoom = mongoDao.getGameRoomByThreadId(threadId);
+    Task nextTask = gameRoom.getNextTask().get();
+
+    nextTask.setFinalMark(finalMark);
+    mongoDao.save(gameRoom);
+
+    var blocks = makePollEndJson2(user.getUsername(), nextTask.getTitle(), nextTask.getEstimations(), finalMark);
+    var updMessage = ctx.client().chatUpdate(r -> r
+        .channel(channel.getId())
+        .ts(messageTs)
+        .text("голосование")
+        .blocksAsString(blocks)
+    );
+    if (!updMessage.isOk()) {
+      System.out.println("chat.postMessage failed: " + updMessage.getError());
+    }
+
+    // если это была последняя задача то здесь будем постить не кнопку а результаты портфеля
+
+    // + новое сообщение с кнопкой следующая задача, которое будем апдейтить
+    postNextTaskButton(ctx.client(), gameRoom.getId(), channel.getId(), threadId);
+
+    return ctx.ack();
+  }
+
+  private void postNextTaskButton(MethodsClient client, String gameRoomId, String channelId, String threadId) throws SlackApiException, IOException {
+    var blocks2 = makeNextTaskButtonJson(gameRoomId);
+    ChatPostMessageResponse message2 = client.chatPostMessage(r -> r
+        .channel(channelId)
+        .threadTs(threadId)
+        .text("начать оценку")
+        .blocksAsString(blocks2));
+    if (!message2.isOk()) {
+      System.out.println("chat.postMessage failed: " + message2.getError());
+    }
   }
 
 
@@ -265,11 +343,75 @@ public class SlackOnBolt {
 
 
 
+  public String makePollEndJson2(String userName, String taskTitle, List<TaskEstimation> estimations, String finalMark) {
+    String pollResults = estimations.stream().map(e -> e.getUserName() + " " + e.getMark()).collect(Collectors.joining("\n"));
 
+    return """
+        [{
+          "type": "section",
+          "text": {
+            "type": "plain_text",
+            "text": "(%s)\\n%s\\nРезультаты:\\n%s",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "plain_text",
+            "text": "Итоговая оценка: %s",
+            "emoji": true
+          }
+        }]
+        """.formatted(userName, taskTitle, pollResults, finalMark);
+  }
 
+  public String makePollEndJson(String userName, List<TaskEstimation> estimations) {
+    String pollResults = estimations.stream().map(e -> e.getUserName() + " " + e.getMark()).collect(Collectors.joining("\n"));
 
+    return """
+        [{
+          "type": "section",
+          "text": {
+            "type": "plain_text",
+            "text": "%s завершает голосование",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "plain_text",
+            "text": "Результаты:\\n%s",
+            "emoji": true
+          }
+        },
+        {
+          "dispatch_action": true,
+          "type": "input",
+          "element": {
+            "type": "plain_text_input",
+            "action_id": "%s"
+          },
+          "label": {
+            "type": "plain_text",
+            "text": "Итоговая оценка",
+            "emoji": true
+          }
+        }]
+        """.formatted(userName, pollResults, POLL_END2);
+  }
 
-  public String makeCreateRoomModalJson() {
+  public String makeCreateRoomModalJson(List<EstimationScale> estimationScales) {
+    String scaleOptions = estimationScales.stream()
+        .map(item -> """
+          {
+            "label": "%s: %s",
+            "value": "%s"
+          },
+          """.formatted(item.getName(), item.getMarks(), item.getId())
+        )
+        .collect(Collectors.joining(" "));
     return """
         {
             "callback_id": "%s",
@@ -292,17 +434,12 @@ public class SlackOnBolt {
                     "type": "select",
                     "name": "my_name_3",
                     "options": [
+        """.formatted(CREATE_ROOM_REQUEST)
+        + scaleOptions +
+        """
                         {
-                          "label": "первый вариант: 1,2,3,4",
-                          "value": "select1"
-                        },
-                        {
-                          "label": "второй вариант 4,5,6,7",
-                          "value": "select2"
-                        },
-                        {
-                          "label": "своя шкала",
-                          "value": "select3"
+                          "label": "Новая шкала",
+                          "value": "new_scale"
                         }
                       ]
                 },
@@ -314,11 +451,11 @@ public class SlackOnBolt {
                 }
             ]
         }
-        """.formatted(CREATE_ROOM_REQUEST);
+        """;
   }
 
 
-  public String makePlayButtonJson() {
+  public String makeNextTaskButtonJson(String gameRoomId) {
     return """
         [
           {
@@ -328,37 +465,25 @@ public class SlackOnBolt {
                 "type": "button",
                 "text": {
                   "type": "plain_text",
-                  "text": "Начать игру",
+                  "text": "Следующая задача",
                   "emoji": true
                 },
-                "value": "qqq",
+                "value": "%s",
                 "action_id": "%s"
               }
             ]
           }
         ]
-        """.formatted(START_GAME);
+        """.formatted(gameRoomId, NEXT_TASK);
   }
 
-  public String playButtonPressedJson(String userName) {
-    return """
-        [
-          {
-            "type": "section",
-            "text": {
-              "type": "plain_text",
-              "text": "<@%s нажимает",
-              "emoji": true
-            }
-          }
-        ]
-        """.formatted(userName);
-  }
+  public String pollJson1(String userName, String gameRoomId, String taskTitle, List<String> marks) {
 
-  public String pollJson(List<String> users) {
-    String usersDone = "";
-    if (users.size() > 0) {
-      usersDone = """
+    String taskTitle1 = taskTitle;
+    if (userName != null) {
+      taskTitle1 = "(" + userName + ")\n" + taskTitle;
+    }
+    String taskTitleBlock = """
           {
             "type": "section",
             "text": {
@@ -367,11 +492,40 @@ public class SlackOnBolt {
               "emoji": true
             }
           },
-      """.formatted("завершили:\n" + users.get(0));
-    }
+      """.formatted(taskTitle1);
+
+    String marksBlock = marks.stream()
+        .map(mark -> """
+          {
+            "type": "button",
+            "text": {
+              "type": "plain_text",
+              "text": "%s",
+              "emoji": true
+            },
+            "value": "%s",
+            "action_id": "%s-%s"
+          }
+          """.formatted(mark, mark, POLL_OPTION_1, mark)
+        )
+        .collect(Collectors.joining(", "));
 
     return """
         [
+        """
+        + taskTitleBlock +
+        """
+          {
+            "type": "actions",
+            "elements": [
+        """
+        + marksBlock +
+        """
+            ]
+          },
+          {
+            "type": "divider"
+          },
           {
             "type": "actions",
             "elements": [
@@ -379,38 +533,74 @@ public class SlackOnBolt {
                 "type": "button",
                 "text": {
                   "type": "plain_text",
-                  "text": "Farmhouse",
+                  "text": "Закончить голосование",
                   "emoji": true
                 },
-                "value": "click_me_123",
-                "action_id": "%s"
-              },
-              {
-                "type": "button",
-                "text": {
-                  "type": "plain_text",
-                  "text": "Kin Khao",
-                  "emoji": true
-                },
-                "value": "click_me_123",
-                "action_id": "%s"
-              },
-              {
-                "type": "button",
-                "text": {
-                  "type": "plain_text",
-                  "text": "Ler Ros",
-                  "emoji": true
-                },
-                "value": "click_me_123",
+                "value": "%s",
                 "action_id": "%s"
               }
+            ]
+          }
+        ]
+        """.formatted(gameRoomId, POLL_END);
+  }
+
+  public String pollJson2(String gameRoomId, String taskTitle, List<String> marks, List<String> users) {
+    String usersDone = """
+        {
+          "type": "section",
+          "text": {
+            "type": "plain_text",
+            "text": "%s",
+            "emoji": true
+          }
+        },
+    """.formatted("Нажали:\n" + String.join("\n", users));
+
+    String taskTitleBlock = """
+          {
+            "type": "section",
+            "text": {
+              "type": "plain_text",
+              "text": "%s",
+              "emoji": true
+            }
+          },
+      """.formatted(taskTitle);
+
+    String marksBlock = marks.stream()
+        .map(mark -> """
+          {
+            "type": "button",
+            "text": {
+              "type": "plain_text",
+              "text": "%s",
+              "emoji": true
+            },
+            "value": "%s",
+            "action_id": "%s-%s"
+          }
+          """.formatted(mark, mark, POLL_OPTION_1, mark)
+        )
+        .collect(Collectors.joining(", "));
+
+    return """
+        [
+        """
+        + taskTitleBlock +
+        """
+          {
+            "type": "actions",
+            "elements": [
+        """
+        + marksBlock +
+        """
             ]
           },
           {
             "type": "divider"
           },
-        """.formatted(POLL_OPTION_1, POLL_OPTION_2, POLL_OPTION_3)
+        """
         +
         usersDone
         +
@@ -422,15 +612,15 @@ public class SlackOnBolt {
                 "type": "button",
                 "text": {
                   "type": "plain_text",
-                  "text": "Закончить",
+                  "text": "Закончить голосование",
                   "emoji": true
                 },
-                "value": "click_me_123",
+                "value": "%s",
                 "action_id": "%s"
               }
             ]
           }
         ]
-        """.formatted(POLL_END);
+        """.formatted(gameRoomId, POLL_END);
   }
 }
