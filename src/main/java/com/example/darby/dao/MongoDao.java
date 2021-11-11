@@ -39,7 +39,7 @@ public class MongoDao {
   }
 
   // race condition
-  public String getOrSave(EstimationScale estimationScale) {
+  public String getEstimationScaleOrSave(EstimationScale estimationScale) {
     Query findQuery = new Query();
     Criteria criteria = Criteria.where("marks").is(estimationScale.getMarks());
     findQuery.addCriteria(criteria);
@@ -54,7 +54,7 @@ public class MongoDao {
   }
 
   // race condition
-  public void saveIfNotExists(User user) {
+  public void saveUserIfNotExists(User user) {
     var user1 = getUserBySlackId(user.getSlackId());
 
     if (user1 != null) {

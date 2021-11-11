@@ -9,9 +9,9 @@ public class Task {
   private List<TaskEstimation> estimations;
   private String finalMark;
 
-  public Task(String title, List<TaskEstimation> estimations) {
+  public Task(String title) {
     this.title = title;
-    this.estimations = estimations;
+    this.estimations = List.of();
   }
 
   public String getTitle() {
@@ -36,5 +36,12 @@ public class Task {
 
   public void setFinalMark(String finalMark) {
     this.finalMark = finalMark;
+  }
+
+  public String getStoryPoints() {
+    if (getFinalMark().matches("[0-9]*\\.?[0-9]+")) {
+      return getFinalMark();
+    }
+    return null;
   }
 }

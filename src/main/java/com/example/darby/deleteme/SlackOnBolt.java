@@ -7,8 +7,10 @@ import com.example.darby.documents.Task;
 import com.example.darby.documents.TaskEstimation;
 import com.example.darby.documents.User;
 import com.example.darby.dto.CrabTeam;
+import com.example.darby.dto.JiraIssuesCreated;
 import com.slack.api.app_backend.dialogs.payload.DialogSubmissionPayload;
 import com.slack.api.app_backend.events.payload.EventsApiPayload;
+import com.slack.api.app_backend.interactive_components.payload.BlockActionPayload;
 import com.slack.api.bolt.App;
 import com.slack.api.bolt.context.builtin.ActionContext;
 import com.slack.api.bolt.context.builtin.DialogSubmissionContext;
@@ -21,7 +23,6 @@ import com.slack.api.bolt.response.Response;
 import com.slack.api.bolt.socket_mode.SocketModeApp;
 import com.slack.api.methods.MethodsClient;
 import com.slack.api.methods.SlackApiException;
-import com.slack.api.methods.response.chat.ChatPostEphemeralResponse;
 import com.slack.api.methods.response.chat.ChatPostMessageResponse;
 import com.slack.api.methods.response.dialog.DialogOpenResponse;
 import com.slack.api.model.event.ReactionAddedEvent;
@@ -34,59 +35,64 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.annotation.PreDestroy;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.util.Pair;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 
 @Component
 public class SlackOnBolt {
-  private static final String CREATE_ROOM_MODAL = "darby_play_id";
-  private static final String CREATE_ROOM_REQUEST = "create_room_request";
-  private static final String NEXT_TASK = "start_game_id";
-  private static final String POLL_OPTION_1 = "actionId-31231";
-  private static final String POLL_END = "actionId-1212";
-  private static final String POLL_END2 = "plain_text_input-action452524";
-  private static final String POLL_END3 = "jirabutton-action452524";
+  private static final String CREATE_ROOM_MODAL = "darby_play_id"; // set in interface
+  private static final String CREATE_ROOM_REQUEST_EVENT = "create_room_request_event";
+  private static final String NEXT_TASK_EVENT = "next_task_event";
+  private static final String POLL_OPTION_SELECTED_EVENT = "poll_option_selected";
+  private static final String POLL_ENDED_EVENT = "poll_ended_event";
+  private static final String TASK_ESTIMATED_EVENT = "task_estimated_event";
+  private static final String CREATE_JIRA_ISSUE_EVENT = "create_jira_issue_event";
+
+  private final Pattern PORTFOLIO_PATTERN_LONG = Pattern.compile("^https://jira\\.hh\\.ru/browse/(PORTFOLIO-\\d+)$");
+  private final Pattern PORTFOLIO_PATTERN_SHORT = Pattern.compile("^(PORTFOLIO-\\d+)$");
+  private final Pattern POLL_OPTION_SELECTED_PATTERN = Pattern.compile("^" + POLL_OPTION_SELECTED_EVENT + "-\\w+$");
 
   private SocketModeApp socketApp;
   private final MongoDao mongoDao;
   private final WebClient webClient;
+  private final String jiraToken;
 
-  public SlackOnBolt(MongoDao mongoDao, WebClient webClient) {
+  public SlackOnBolt(MongoDao mongoDao,
+                     WebClient webClient,
+                     @Value("${jira-username}") String jiraUsername,
+                     @Value("${jira-password}") String jiraPassword) {
     this.mongoDao = mongoDao;
     this.webClient = webClient;
+
+    String jiraCred = jiraUsername + ":" + jiraPassword;
+    this.jiraToken = Base64.getEncoder().encodeToString(jiraCred.getBytes());
   }
 
   @Scheduled(initialDelay = 1000, fixedDelay=Long.MAX_VALUE)
   public void init() throws Exception {
-    initDataSourceProxyFactory();
-  }
-
-  public void initDataSourceProxyFactory() throws Exception {
     App app = new App();
 
-    // сообщение в тред за эмодзи
+    // stub
     app.event(ReactionAddedEvent.class, this::emodzi);
-    app.event(ReactionRemovedEvent.class, (payload, ctx) -> {
-      return ctx.ack();
-    });
+    app.event(ReactionRemovedEvent.class, (payload, ctx) -> ctx.ack());
 
-    // показать модал форму с тригера
-    app.globalShortcut(CREATE_ROOM_MODAL, this::getRoomCreationModal);
-    app.dialogSubmission(CREATE_ROOM_REQUEST, this::createRoomRequest);
-    app.blockAction(NEXT_TASK, this::nextTask);
-    app.blockAction(Pattern.compile("^" + POLL_OPTION_1 + "-\\w+" + "$"), this::pollEvent);
-    app.blockAction(POLL_END, this::pollEnd);
-    app.blockAction(POLL_END2, this::pollEnd2);
-    app.blockAction(POLL_END3, this::jiraPost);
+    // portfolio flow
+    app.globalShortcut(CREATE_ROOM_MODAL, this::handleCreateRoomShortcut);
+    app.dialogSubmission(CREATE_ROOM_REQUEST_EVENT, this::handleCreateGameRoom);
+    app.blockAction(NEXT_TASK_EVENT, this::handleNextTask);
+    app.blockAction(POLL_OPTION_SELECTED_PATTERN, this::handlePollSelect);
+    app.blockAction(POLL_ENDED_EVENT, this::handlePollStop);
+    app.blockAction(TASK_ESTIMATED_EVENT, this::handleTaskDone);
+    app.blockAction(CREATE_JIRA_ISSUE_EVENT, this::handleJiraButton);
 
     socketApp = new SocketModeApp(app);
     socketApp.start();
@@ -97,185 +103,228 @@ public class SlackOnBolt {
     socketApp.stop();
   }
 
-
-  // просто показываем модалку
-  public Response getRoomCreationModal(GlobalShortcutRequest req, GlobalShortcutContext ctx) throws SlackApiException, IOException {
+  public Response handleCreateRoomShortcut(
+      GlobalShortcutRequest req,
+      GlobalShortcutContext ctx
+  ) throws SlackApiException, IOException {
     List<EstimationScale> estimationScales = mongoDao.getAllEstimationScales(req.getPayload().getUser().getId());
-    String modalJson = makeCreateRoomModalJson(estimationScales);
+    String modal = makeRoomCreationModalBody(estimationScales);
 
-    DialogOpenResponse apiResponse = ctx.client().dialogOpen(r -> r
+    DialogOpenResponse response = ctx.client().dialogOpen(r -> r
         .triggerId(req.getPayload().getTriggerId())
-        .dialogAsString(modalJson));
-    if (!apiResponse.isOk()) {
-      System.out.println("chat.postMessage failed: " + apiResponse.getError());
-      System.out.println(apiResponse.getResponseMetadata());
+        .dialogAsString(modal));
+
+    if (!response.isOk()) {
+      System.out.println("dialogOpen failed: " + response.getError());
     }
 
     return ctx.ack();
   }
 
-  // реквест заполненной модалки
-  private Response createRoomRequest(DialogSubmissionRequest req, DialogSubmissionContext ctx) throws SlackApiException, IOException {
-    DialogSubmissionPayload.Channel channel = req.getPayload().getChannel();
-    DialogSubmissionPayload.User user = req.getPayload().getUser();
-    Map<String, String> data = req.getPayload().getSubmission();
-    String title = data.get("my_name_1");
-    String tasksText = data.get("my_name_2");
-    String estimationScaleId = data.get("my_name_3");
+  private Response handleCreateGameRoom(
+      DialogSubmissionRequest req,
+      DialogSubmissionContext ctx
+  ) throws SlackApiException, IOException {
+    DialogSubmissionPayload.Channel slackChannel = req.getPayload().getChannel();
+    DialogSubmissionPayload.User slackUser = req.getPayload().getUser();
+    Map<String, String> formData = req.getPayload().getSubmission();
+    String portfolioKey = extractPortfolioKey(formData.get("portfolio_key")).orElseThrow();
+    String tasksText = formData.get("tasks_text");
+    String estimationScaleId = formData.get("estimation_scale_id");
+    String newEstimationScale = formData.get("new_estimation_scale");
 
-    mongoDao.saveIfNotExists(new User(user.getId(), user.getName()));
+    mongoDao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
 
-    if ("new_scale".equals(estimationScaleId)) {
-      EstimationScale estimationScale = new EstimationScale(
-          "Своя шкала",
-          List.of(data.get("my_name_4").split("[\\s,]+"))
-      );
-      estimationScaleId = mongoDao.getOrSave(estimationScale);
+    if (estimationScaleId.equals("new_scale")) {
+      EstimationScale estimationScale = new EstimationScale("Своя шкала", List.of(newEstimationScale.split("[\\s,]+")));
+      estimationScaleId = mongoDao.getEstimationScaleOrSave(estimationScale);
     }
 
-    // постим сообщение в треде которого будет весь движ
-    ChatPostMessageResponse message = ctx.client().chatPostMessage(r -> r
-        .channel(channel.getId())
-        .text("тредик для оценки " + title));
-    if (!message.isOk()) {
-      System.out.println("chat.postMessage failed: " + message.getError());
+    ChatPostMessageResponse response = ctx.client().chatPostMessage(r -> r
+        .channel(slackChannel.getId())
+        .text("Тредик для оценки " + portfolioKey));
+    if (!response.isOk()) {
+      System.out.println("chatPostMessage failed: " + response.getError());
+      return ctx.ack();
     }
-    var threadId = message.getTs();
+    String threadId = response.getTs();
 
-    List<Task> tasks = tasksText.lines()
-        .map(taskTitle -> new Task(taskTitle, List.of()))
-        .collect(Collectors.toList());
-    GameRoom gameRoom = new GameRoom(title, estimationScaleId, user.getId(), channel.getId(), threadId, tasks);
+    List<Task> tasks = tasksText.lines().map(Task::new).collect(Collectors.toList());
+    GameRoom gameRoom = new GameRoom(portfolioKey, estimationScaleId, slackUser.getId(), slackChannel.getId(), threadId,
+        tasks);
     String gameRoomId = mongoDao.save(gameRoom).getId();
 
-    // постим в тред первое сообщение - кнопка "следующая задача"
-    postNextTaskButton(ctx.client(), gameRoomId, channel.getId(), threadId);
+    postNextTaskButton(ctx.client(), gameRoomId, slackChannel.getId(), threadId);
 
     return ctx.ack();
   }
 
-  // кто-то нажал на кнопку следующая задача
-  private Response nextTask(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
-    var channelId = req.getPayload().getContainer().getChannelId();
+  private Response handleNextTask(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
+    String channelId = req.getPayload().getContainer().getChannelId();
     String gameRoomId = req.getPayload().getActions().get(0).getValue();
-    var messageId = req.getPayload().getContainer().getMessageTs();
-    var threadId = req.getPayload().getMessage().getThreadTs();
-    var user = req.getPayload().getUser();
+    String messageId = req.getPayload().getContainer().getMessageTs();
+    BlockActionPayload.User slackUser = req.getPayload().getUser();
 
-    mongoDao.saveIfNotExists(new User(user.getId(), user.getName()));
+    mongoDao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
 
     GameRoom gameRoom = mongoDao.getGameRoom(gameRoomId);
     EstimationScale estimationScale = mongoDao.getEstimationScale(gameRoom.getEstimationScaleId());
-    Task nextTask = gameRoom.getNextTask().get();
+    Task nextTask = gameRoom.getNextTask()
+        .get(); // в первый раз таска есть, в остальные разы постим только если есть некст
 
-    var updBlocks = pollJson1(user.getUsername(), gameRoomId, nextTask.getTitle(), estimationScale.getMarks());
-    updateMessage(ctx.client(), channelId, messageId, "голосование", updBlocks);
+    String updBlocks = makePollStartedBody(slackUser.getUsername(), gameRoomId, nextTask.getTitle(),
+        estimationScale.getMarks());
+    updateSlackMessage(ctx.client(), channelId, messageId, "голосование", updBlocks);
 
     return ctx.ack();
   }
 
-  private Response pollEvent(BlockActionRequest req, ActionContext ctx) throws SlackApiException, IOException {
-    var channel = req.getPayload().getChannel();
-    var messageId = req.getPayload().getMessage().getTs();
-    var threadId = req.getPayload().getMessage().getThreadTs();
-    var user = req.getPayload().getUser();
-    var selected = req.getPayload().getActions().get(0).getValue();
+  private Response handlePollSelect(BlockActionRequest req, ActionContext ctx) throws SlackApiException, IOException {
+    BlockActionPayload.Channel channel = req.getPayload().getChannel();
+    String messageId = req.getPayload().getMessage().getTs();
+    String threadId = req.getPayload().getMessage().getThreadTs();
+    BlockActionPayload.User slackUser = req.getPayload().getUser();
+    String selected = req.getPayload().getActions().get(0).getValue();
 
-    mongoDao.saveIfNotExists(new User(user.getId(), user.getName()));
-
+    mongoDao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
 
     GameRoom gameRoom = mongoDao.getGameRoomByThreadId(threadId);
     EstimationScale estimationScale = mongoDao.getEstimationScale(gameRoom.getEstimationScaleId());
-    Task nextTask = gameRoom.getNextTask().get();
+    Task currentTask = gameRoom.getNextTask().get();
 
     // race condition?
-    Optional<TaskEstimation> lastEstimation = nextTask.getEstimations().stream()
-        .filter(e -> e.getUserName().equals(user.getUsername()))
+    Optional<TaskEstimation> lastUserEstimationOpt = currentTask.getEstimations().stream()
+        .filter(e -> e.getUserName().equals(slackUser.getUsername()))
         .findFirst();
-    if (lastEstimation.isEmpty()) {
-      nextTask.getEstimations().add(new TaskEstimation(user.getUsername(), selected));
+    if (lastUserEstimationOpt.isEmpty()) {
+      currentTask.getEstimations().add(new TaskEstimation(slackUser.getUsername(), selected));
     } else {
-      lastEstimation.get().setMark(selected);
+      lastUserEstimationOpt.get().setMark(selected);
     }
     mongoDao.save(gameRoom);
 
-    List<String> users = nextTask.getEstimations().stream()
+    List<String> usersDone = currentTask.getEstimations().stream()
         .map(TaskEstimation::getUserName)
-        .filter(userName -> !userName.equals(user.getUsername()))
+        .filter(userName -> !userName.equals(slackUser.getUsername()))
         .collect(Collectors.toList());
-    users.add(user.getUsername());
+    usersDone.add(slackUser.getUsername());
 
-    var updBlocks = pollJson2(gameRoom.getId(), nextTask.getTitle(), estimationScale.getMarks(), users);
-    updateMessage(ctx.client(), channel.getId(), messageId, "голосование", updBlocks);
+    String updBlocks = malePollUpdatedBody(gameRoom.getId(), currentTask.getTitle(), estimationScale.getMarks(),
+        usersDone);
+    updateSlackMessage(ctx.client(), channel.getId(), messageId, "голосование", updBlocks);
 
     return ctx.ack();
   }
 
-  private Response pollEnd(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
-    var channel = req.getPayload().getChannel();
-    var messageId = req.getPayload().getMessage().getTs();
-    var threadId = req.getPayload().getMessage().getThreadTs();
-    var user = req.getPayload().getUser();
-    var gameRoomId = req.getPayload().getActions().get(0).getValue();
+  private Response handlePollStop(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
+    BlockActionPayload.Channel channel = req.getPayload().getChannel();
+    String messageId = req.getPayload().getMessage().getTs();
+    BlockActionPayload.User slackUser = req.getPayload().getUser();
+    String gameRoomId = req.getPayload().getActions().get(0).getValue();
 
-    mongoDao.saveIfNotExists(new User(user.getId(), user.getName()));
+    mongoDao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
 
     GameRoom gameRoom = mongoDao.getGameRoom(gameRoomId);
-    Task nextTask = gameRoom.getNextTask().get();
+    Task currentTask = gameRoom.getNextTask().get();
 
-    var blocks = makePollEndJson(user.getUsername(), nextTask.getEstimations());
-    updateMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
+    String blocks = makePollEndedBody(slackUser.getUsername(), currentTask.getEstimations());
+    updateSlackMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
 
     return ctx.ack();
   }
 
-  private Response pollEnd2(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
-    var channel = req.getPayload().getChannel();
-    var messageId = req.getPayload().getMessage().getTs();
-    var threadId = req.getPayload().getMessage().getThreadTs();
-    var user = req.getPayload().getUser();
-    var finalMark = req.getPayload().getActions().get(0).getValue();
+  private Response handleTaskDone(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
+    BlockActionPayload.Channel channel = req.getPayload().getChannel();
+    String messageId = req.getPayload().getMessage().getTs();
+    String threadId = req.getPayload().getMessage().getThreadTs();
+    BlockActionPayload.User slackUser = req.getPayload().getUser();
+    String finalMark = req.getPayload().getActions().get(0).getValue();
 
-    mongoDao.saveIfNotExists(new User(user.getId(), user.getName()));
+    mongoDao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
 
     GameRoom gameRoom = mongoDao.getGameRoomByThreadId(threadId);
-    Task nextTask = gameRoom.getNextTask().get();
+    Task currentTask = gameRoom.getNextTask().get();
 
-    nextTask.setFinalMark(finalMark);
+    currentTask.setFinalMark(finalMark);
     mongoDao.save(gameRoom);
 
-    var blocks = makePollEndJson2(user.getUsername(), nextTask.getTitle(), nextTask.getEstimations(), finalMark);
-    updateMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
+    String blocks = makeTaskEndedBody(slackUser.getUsername(), currentTask.getTitle(), currentTask.getEstimations(),
+        finalMark);
+    updateSlackMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
 
     if (gameRoom.getNextTask().isPresent()) {
       postNextTaskButton(ctx.client(), gameRoom.getId(), channel.getId(), threadId);
     } else {
-      var blocks2 = makeRoomEndJson(gameRoom);
-      ChatPostMessageResponse message2 = ctx.client().chatPostMessage(r -> r
+      String blocks2 = makeGameRoomEndedBody(gameRoom);
+      ChatPostMessageResponse response = ctx.client().chatPostMessage(r -> r
           .channel(channel.getId())
           .threadTs(threadId)
           .text("результаты")
           .blocksAsString(blocks2));
-      if (!message2.isOk()) {
-        System.out.println("chat.postMessage failed: " + message2.getError());
+      if (!response.isOk()) {
+        System.out.println("chatPostMessage failed: " + response.getError());
       }
     }
     return ctx.ack();
   }
 
-  private void postNextTaskButton(MethodsClient client, String gameRoomId, String channelId, String threadId) throws SlackApiException, IOException {
-    var blocks2 = makeNextTaskButtonJson(gameRoomId);
-    ChatPostMessageResponse message2 = client.chatPostMessage(r -> r
+  private Response handleJiraButton(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
+    BlockActionPayload.Channel channel = req.getPayload().getChannel();
+    String messageId = req.getPayload().getMessage().getTs();
+    String threadId = req.getPayload().getMessage().getThreadTs();
+    BlockActionPayload.User slackUser = req.getPayload().getUser();
+
+    mongoDao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
+    GameRoom gameRoom = mongoDao.getGameRoomByThreadId(threadId);
+
+    User user = prepareLdapUser(slackUser.getId());
+    createJiraIssues(gameRoom, user);
+
+    String portfolioLink = "https://jira.hh.ru/browse/" + gameRoom.getTitle();
+    String blocks = makeJiraDoneBody(gameRoom, slackUser.getUsername(), portfolioLink);
+    updateSlackMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
+
+    return ctx.ack();
+  }
+
+  private Optional<String> extractPortfolioKey(String portfolioString) {
+    Matcher matcher_long = PORTFOLIO_PATTERN_LONG.matcher(portfolioString);
+    if (matcher_long.matches()) {
+      return Optional.of(matcher_long.group(1));
+    }
+
+    Matcher matcher_short = PORTFOLIO_PATTERN_SHORT.matcher(portfolioString);
+    if (matcher_short.matches()) {
+      return Optional.of(matcher_short.group(1));
+    }
+
+    return Optional.empty();
+  }
+
+  private void postNextTaskButton(
+      MethodsClient client,
+      String gameRoomId,
+      String channelId,
+      String threadId
+  ) throws SlackApiException, IOException {
+    String body = makeNextTaskButtonBody(gameRoomId);
+    ChatPostMessageResponse response = client.chatPostMessage(r -> r
         .channel(channelId)
         .threadTs(threadId)
         .text("начать оценку")
-        .blocksAsString(blocks2));
-    if (!message2.isOk()) {
-      System.out.println("chat.postMessage failed: " + message2.getError());
+        .blocksAsString(body));
+    if (!response.isOk()) {
+      System.out.println("chatPostMessage failed: " + response.getError());
     }
   }
 
-  private void updateMessage(MethodsClient client, String channelId, String messageId, String title, String blocks) throws SlackApiException, IOException {
+  private void updateSlackMessage(
+      MethodsClient client,
+      String channelId,
+      String messageId,
+      String title,
+      String blocks
+  ) throws SlackApiException, IOException {
     var updMessage = client.chatUpdate(r -> r
         .channel(channelId)
         .ts(messageId)
@@ -287,109 +336,20 @@ public class SlackOnBolt {
     }
   }
 
-  private Response jiraPost(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
-    var channel = req.getPayload().getChannel();
-    var messageId = req.getPayload().getMessage().getTs();
-    var threadId = req.getPayload().getMessage().getThreadTs();
-    var user = req.getPayload().getUser();
-    var finalMark = req.getPayload().getActions().get(0).getValue();
+  public User prepareLdapUser(String userId) {
+    User user = mongoDao.getUserBySlackId(userId);
+    if (user.getLdapUserName() == null || user.getLdapTeamName() == null) {
+      Pair<CrabTeam, CrabTeam.Mate> crabUser = getCrabUser(user.getSlackUserName());
 
-    mongoDao.saveIfNotExists(new User(user.getId(), user.getName()));
-
-    GameRoom gameRoom = mongoDao.getGameRoomByThreadId(threadId);
-
-//    var blocks = jiraDoneJson(gameRoom, user.getUsername(), "portfolioLink");
-//    updateMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
-
-    // + пост в жиру
-    User user1 = preapareUser(user.getId());
-
-//    postJiraTasks(user1, gameRoom.getTasks(), gameRoom.getTitle());
-
-    // пытаемся создать задачки в жире
-    // если до сюда дошли то уже и команда есть и задачи
-    String resp;
-    String originalInput = "";
-    String encodedString = Base64.getEncoder().encodeToString(originalInput.getBytes());
-
-    MultiValueMap<String, String> bodyValues = new LinkedMultiValueMap<>();
-    bodyValues.add("issueUpdates", """
-        [
-                {
-                    "fields": {
-                        "project": {
-                            "key": "HH"
-                        },
-                        "summary": "Тестовая задача",
-                        "description": "Creating of an issue using project keys and issue type names using the REST API",
-                        "issuetype": {
-                            "name": "Task"
-                        },
-                        "assignee":{"name":"l.vinogradov"},
-                        "customfield_10961": {"value": "Brandy"},
-                        "customfield_11212": 2.5
-                    }
-                }
-            ]
-        """);
-
-    try {
-      resp = webClient.post()
-          .uri(new URI("https://jira.hh.ru/rest/api/2/issue/bulk"))
-          .header("Content-Type", "application/json")
-          .header("Authorization", "Basic " + encodedString)
-          .body(BodyInserters.fromFormData(bodyValues))
-          .retrieve()
-          .bodyToMono(String.class)
-          .log()
-          .block();
-
-    } catch (URISyntaxException e) {
-      e.printStackTrace();
-      throw new RuntimeException("123");
-    }
-
-    return ctx.ack();
-  }
-
-  public Pair<CrabTeam, CrabTeam.Mate> postJiraTasks(User user1, List<Task> tasks, String slackUserName) {
-    List<CrabTeam> resp;
-    try {
-      resp = webClient.get()
-          .uri(new URI("https://crab.pyn.ru/users"))
-          .header("Content-Type", "application/json")
-          .retrieve()
-          .bodyToMono(new ParameterizedTypeReference<List<CrabTeam>>() {})
-          .log()
-          .block();
-
-    } catch (URISyntaxException e) {
-      e.printStackTrace();
-      throw new RuntimeException("123");
-    }
-
-    return resp.stream()
-        .map(team -> team.activeMembers.stream().map(mate -> Pair.of(team, mate)))
-        .flatMap(Function.identity())
-        .filter(item -> ("@" + slackUserName).equals(item.getSecond().employee.slack))
-        .findFirst()
-        .orElseThrow();
-  }
-
-  public User preapareUser(String userId) {
-    User user1 = mongoDao.getUserBySlackId(userId);
-    if (user1.getLdapUserName() == null || user1.getLdapTeamName() == null) {
-      Pair<CrabTeam, CrabTeam.Mate> crabUser = getCrabUser(user1.getSlackUserName());
-
-      user1.setLdapUserName(crabUser.getSecond().employee.login);
+      user.setLdapUserName(crabUser.getSecond().employee.login);
       if (!crabUser.getFirst().name.startsWith("Команда ")) {
-        throw new RuntimeException("123");
+        throw new RuntimeException("Team not found");
       }
-      user1.setLdapTeamName(crabUser.getFirst().name.substring(8));
-      mongoDao.save(user1);
+      user.setLdapTeamName(crabUser.getFirst().name.substring(8));
+      mongoDao.save(user);
     }
 
-    return user1;
+    return user;
   }
 
   public Pair<CrabTeam, CrabTeam.Mate> getCrabUser(String slackUserName) {
@@ -402,7 +362,6 @@ public class SlackOnBolt {
           .bodyToMono(new ParameterizedTypeReference<List<CrabTeam>>() {})
           .log()
           .block();
-
     } catch (URISyntaxException e) {
       e.printStackTrace();
       throw new RuntimeException("123");
@@ -416,14 +375,42 @@ public class SlackOnBolt {
         .orElseThrow();
   }
 
+  private void createJiraIssues(GameRoom gameRoom, User user) {
+    JiraIssuesCreated creationResponse;
+    try {
+      String issuesBody = makeJiraIssueBody(gameRoom, user);
+      creationResponse = webClient.post()
+          .uri(new URI("https://jira.hh.ru/rest/api/2/issue/bulk"))
+          .header("Content-Type", "application/json")
+          .header("Authorization", "Basic " + jiraToken)
+          .body(BodyInserters.fromValue(issuesBody))
+          .retrieve()
+          .bodyToMono(JiraIssuesCreated.class)
+          .log()
+          .block();
+    } catch (URISyntaxException e) {
+      e.printStackTrace();
+      throw new RuntimeException("");
+    }
 
-
-
-
-
-
-
-
+    creationResponse.issues.forEach(issue -> {
+      try {
+        String issueLinkBody = makeJiraIssueLinkBody(issue.key, gameRoom.getTitle());
+        webClient.post()
+            .uri(new URI("https://jira.hh.ru/rest/api/2/issueLink"))
+            .header("Content-Type", "application/json")
+            .header("Authorization", "Basic " + jiraToken)
+            .body(BodyInserters.fromValue(issueLinkBody))
+            .retrieve()
+            .bodyToMono(JiraIssuesCreated.class)
+            .log()
+            .block();
+      } catch (URISyntaxException e) {
+        e.printStackTrace();
+        throw new RuntimeException("123");
+      }
+    });
+  }
 
 // JIRA
 //  так можно вытащить жира команды
@@ -439,44 +426,26 @@ public class SlackOnBolt {
 //
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  public Response emodzi(EventsApiPayload<ReactionAddedEvent> payload, EventContext ctx) throws SlackApiException, IOException {
-    ReactionAddedEvent event = payload.getEvent();
-    if (event.getReaction().equals("white_check_mark")) {
-      ChatPostEphemeralResponse message = ctx.client().chatPostEphemeral(r -> r
-          .channel(event.getItem().getChannel())
-          .threadTs(event.getItem().getTs())
-          .user(event.getUser())
-          .text("<@" + event.getUser() + "> Thank you! We greatly appreciate your efforts :two_hearts:"));
-      if (!message.isOk()) {
-        System.out.println("chat.postMessage failed: " + message.getError());
-      }
-    }
+  public Response emodzi(EventsApiPayload<ReactionAddedEvent> payload, EventContext ctx) {
+//    ReactionAddedEvent event = payload.getEvent();
+//    if (event.getReaction().equals("white_check_mark")) {
+//      ChatPostEphemeralResponse message = ctx.client().chatPostEphemeral(r -> r
+//          .channel(event.getItem().getChannel())
+//          .threadTs(event.getItem().getTs())
+//          .user(event.getUser())
+//          .text("<@" + event.getUser() + "> Thank you! We greatly appreciate your efforts :two_hearts:"));
+//      if (!message.isOk()) {
+//        System.out.println("chat.postMessage failed: " + message.getError());
+//      }
+//    }
     return ctx.ack();
   }
 
 
-
-
-  public String jiraDoneJson(GameRoom gameRoom, String userName, String portfolioLink) {
-    String roomResults = gameRoom.getTasks().stream().map(t -> t.getTitle() + " - " + t.getFinalMark()).collect(Collectors.joining("\n"));
+  public String makeJiraDoneBody(GameRoom gameRoom, String userName, String portfolioLink) {
+    String roomResults = gameRoom.getTasks().stream()
+        .map(t -> t.getTitle() + " - " + t.getFinalMark())
+        .collect(Collectors.joining("\n"));
 
     return """
         [
@@ -500,10 +469,10 @@ public class SlackOnBolt {
         """.formatted(roomResults, userName, portfolioLink);
   }
 
-
-
-  public String makeRoomEndJson(GameRoom gameRoom) {
-    String roomResults = gameRoom.getTasks().stream().map(t -> t.getTitle() + " - " + t.getFinalMark()).collect(Collectors.joining("\n"));
+  public String makeGameRoomEndedBody(GameRoom gameRoom) {
+    String roomResults = gameRoom.getTasks().stream()
+        .map(t -> t.getTitle() + " - " + t.getFinalMark())
+        .collect(Collectors.joining("\n"));
 
     return """
         [
@@ -531,11 +500,18 @@ public class SlackOnBolt {
             ]
           }
         ]
-        """.formatted(roomResults, gameRoom.getId(), POLL_END3);
+        """.formatted(roomResults, gameRoom.getId(), CREATE_JIRA_ISSUE_EVENT);
   }
 
-  public String makePollEndJson2(String userName, String taskTitle, List<TaskEstimation> estimations, String finalMark) {
-    String pollResults = estimations.stream().map(e -> e.getUserName() + " " + e.getMark()).collect(Collectors.joining("\n"));
+  public String makeTaskEndedBody(
+      String userName,
+      String taskTitle,
+      List<TaskEstimation> estimations,
+      String finalMark
+  ) {
+    String pollResults = estimations.stream()
+        .map(e -> e.getUserName() + " " + e.getMark())
+        .collect(Collectors.joining("\n"));
 
     return """
         [{
@@ -557,8 +533,10 @@ public class SlackOnBolt {
         """.formatted(userName, taskTitle, pollResults, finalMark);
   }
 
-  public String makePollEndJson(String userName, List<TaskEstimation> estimations) {
-    String pollResults = estimations.stream().map(e -> e.getUserName() + " " + e.getMark()).collect(Collectors.joining("\n"));
+  public String makePollEndedBody(String userName, List<TaskEstimation> estimations) {
+    String pollResults = estimations.stream()
+        .map(e -> e.getUserName() + " " + e.getMark())
+        .collect(Collectors.joining("\n"));
 
     return """
         [{
@@ -590,10 +568,10 @@ public class SlackOnBolt {
             "emoji": true
           }
         }]
-        """.formatted(userName, pollResults, POLL_END2);
+        """.formatted(userName, pollResults, TASK_ESTIMATED_EVENT);
   }
 
-  public String makeCreateRoomModalJson(List<EstimationScale> estimationScales) {
+  public String makeRoomCreationModalBody(List<EstimationScale> estimationScales) {
     String scaleOptions = estimationScales.stream()
         .map(item -> """
           {
@@ -612,20 +590,20 @@ public class SlackOnBolt {
                 {
                     "label": "Ссылка на портфель",
                     "type": "text",
-                    "name": "my_name_1"
+                    "name": "portfolio_key"
                 },
                 {
                     "label": "Список задач",
                     "type": "textarea",
-                    "name": "my_name_2",
+                    "name": "tasks_text",
                     "hint": "на отдельных строчках"
                 },
                 {
                     "label": "Выбрать шкалу",
                     "type": "select",
-                    "name": "my_name_3",
+                    "name": "estimation_scale_id",
                     "options": [
-        """.formatted(CREATE_ROOM_REQUEST)
+        """.formatted(CREATE_ROOM_REQUEST_EVENT)
         + scaleOptions +
         """
                         {
@@ -637,7 +615,7 @@ public class SlackOnBolt {
                 {
                     "label": "Своя шкала",
                     "type": "text",
-                    "name": "my_name_4",
+                    "name": "new_estimation_scale",
                     "optional": true
                 }
             ]
@@ -646,7 +624,7 @@ public class SlackOnBolt {
   }
 
 
-  public String makeNextTaskButtonJson(String gameRoomId) {
+  public String makeNextTaskButtonBody(String gameRoomId) {
     return """
         [
           {
@@ -665,11 +643,10 @@ public class SlackOnBolt {
             ]
           }
         ]
-        """.formatted(gameRoomId, NEXT_TASK);
+        """.formatted(gameRoomId, NEXT_TASK_EVENT);
   }
 
-  public String pollJson1(String userName, String gameRoomId, String taskTitle, List<String> marks) {
-
+  public String makePollStartedBody(String userName, String gameRoomId, String taskTitle, List<String> marks) {
     String taskTitle1 = taskTitle;
     if (userName != null) {
       taskTitle1 = "(" + userName + ")\n" + taskTitle;
@@ -697,7 +674,7 @@ public class SlackOnBolt {
             "value": "%s",
             "action_id": "%s-%s"
           }
-          """.formatted(mark, mark, POLL_OPTION_1, mark)
+          """.formatted(mark, mark, POLL_OPTION_SELECTED_EVENT, mark)
         )
         .collect(Collectors.joining(", "));
 
@@ -733,10 +710,10 @@ public class SlackOnBolt {
             ]
           }
         ]
-        """.formatted(gameRoomId, POLL_END);
+        """.formatted(gameRoomId, POLL_ENDED_EVENT);
   }
 
-  public String pollJson2(String gameRoomId, String taskTitle, List<String> marks, List<String> users) {
+  public String malePollUpdatedBody(String gameRoomId, String taskTitle, List<String> marks, List<String> users) {
     String usersDone = """
         {
           "type": "section",
@@ -771,7 +748,7 @@ public class SlackOnBolt {
             "value": "%s",
             "action_id": "%s-%s"
           }
-          """.formatted(mark, mark, POLL_OPTION_1, mark)
+          """.formatted(mark, mark, POLL_OPTION_SELECTED_EVENT, mark)
         )
         .collect(Collectors.joining(", "));
 
@@ -812,6 +789,53 @@ public class SlackOnBolt {
             ]
           }
         ]
-        """.formatted(gameRoomId, POLL_END);
+        """.formatted(gameRoomId, POLL_ENDED_EVENT);
   }
+
+  private String makeJiraIssueBody(GameRoom gameRoom, User user) {
+    String issues = gameRoom.getTasks().stream().map(task -> """
+        {
+            "fields": {
+                "project": {
+                    "key": "HH"
+                },
+                "summary": "%s",
+                "issuetype": {
+                    "name": "Task"
+                },
+                "assignee":{"name":"%s"},
+                "customfield_10961": {"value": "%s"},
+                "customfield_11212": %s
+            }
+        }
+        """.formatted(task.getTitle(), user.getLdapUserName(), user.getLdapTeamName(), task.getStoryPoints())
+    ).collect(Collectors.joining(", "));
+
+    return """
+            {
+                "issueUpdates": [
+                """
+        + issues +
+        """
+                ]
+            }
+        """;
+  }
+
+  private String makeJiraIssueLinkBody(String issueKey, String portfolioKey) {
+    return """
+            {
+                "type": {
+                    "name": "Inclusion"
+                },
+                "inwardIssue": {
+                    "key": "%s"
+                },
+                "outwardIssue": {
+                    "key": "%s"
+                }
+            }
+          """.formatted(portfolioKey, issueKey);
+  }
+
 }
