@@ -11,7 +11,7 @@ public class GameRoom {
 
   @Id
   private String id;
-  private String title;
+  private String portfolioKey;
   private String estimationScaleId;
   private String userId;
   private String channelId;
@@ -19,9 +19,9 @@ public class GameRoom {
   private List<Task> tasks;
   private Instant created;
 
-  public GameRoom(String title, String estimationScaleId, String userId, String channelId,
+  public GameRoom(String portfolioKey, String estimationScaleId, String userId, String channelId,
                   String threadId, List<Task> tasks) {
-    this.title = title;
+    this.portfolioKey = portfolioKey;
     this.estimationScaleId = estimationScaleId;
     this.userId = userId;
     this.channelId = channelId;
@@ -38,12 +38,12 @@ public class GameRoom {
     this.id = id;
   }
 
-  public String getTitle() {
-    return title;
+  public String getPortfolioKey() {
+    return portfolioKey;
   }
 
-  public void setTitle(String title) {
-    this.title = title;
+  public void setPortfolioKey(String portfolioKey) {
+    this.portfolioKey = portfolioKey;
   }
 
   public String getEstimationScaleId() {

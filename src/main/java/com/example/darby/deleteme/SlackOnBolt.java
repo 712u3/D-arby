@@ -280,7 +280,7 @@ public class SlackOnBolt {
     User user = prepareLdapUser(slackUser.getId());
     createJiraIssues(gameRoom, user);
 
-    String portfolioLink = "https://jira.hh.ru/browse/" + gameRoom.getTitle();
+    String portfolioLink = "https://jira.hh.ru/browse/" + gameRoom.getPortfolioKey();
     String blocks = makeJiraDoneBody(gameRoom, slackUser.getUsername(), portfolioLink);
     updateSlackMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
 
@@ -395,7 +395,7 @@ public class SlackOnBolt {
 
     creationResponse.issues.forEach(issue -> {
       try {
-        String issueLinkBody = makeJiraIssueLinkBody(issue.key, gameRoom.getTitle());
+        String issueLinkBody = makeJiraIssueLinkBody(issue.key, gameRoom.getPortfolioKey());
         webClient.post()
             .uri(new URI("https://jira.hh.ru/rest/api/2/issueLink"))
             .header("Content-Type", "application/json")
