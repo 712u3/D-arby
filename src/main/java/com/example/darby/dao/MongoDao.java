@@ -2,16 +2,11 @@ package com.example.darby.dao;
 
 import com.example.darby.documents.EstimationScale;
 import com.example.darby.documents.GameRoom;
-import com.example.darby.documents.Task;
-import com.example.darby.documents.TaskEstimation;
-import java.lang.reflect.InvocationTargetException;
+import com.example.darby.documents.User;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -43,6 +38,7 @@ public class MongoDao {
     return reactiveMongoTemplate.find(findQuery, EstimationScale.class).collectList().block();
   }
 
+  // race condition
   public String getOrSave(EstimationScale estimationScale) {
     Query findQuery = new Query();
     Criteria criteria = Criteria.where("marks").is(estimationScale.getMarks());
@@ -53,10 +49,28 @@ public class MongoDao {
     if (estimationsCale != null) {
       return estimationsCale.getId();
     }
-    // race condition
+
     return reactiveMongoTemplate.save(estimationScale).block().getId();
   }
 
+  // race condition
+  public void saveIfNotExists(User user) {
+    var user1 = getUserBySlackId(user.getSlackId());
+
+    if (user1 != null) {
+      return;
+    }
+
+    reactiveMongoTemplate.save(user).block();
+  }
+
+  public User getUserBySlackId(String userSlackId) {
+    Query findQuery = new Query();
+    Criteria criteria = Criteria.where("slackId").is(userSlackId);
+    findQuery.addCriteria(criteria);
+
+    return reactiveMongoTemplate.find(findQuery, User.class).blockFirst();
+  }
 
   public <T> T save(T entity) {
     return reactiveMongoTemplate.save(entity).block();

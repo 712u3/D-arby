@@ -5,6 +5,8 @@ import com.example.darby.documents.EstimationScale;
 import com.example.darby.documents.GameRoom;
 import com.example.darby.documents.Task;
 import com.example.darby.documents.TaskEstimation;
+import com.example.darby.documents.User;
+import com.example.darby.dto.CrabTeam;
 import com.slack.api.app_backend.dialogs.payload.DialogSubmissionPayload;
 import com.slack.api.app_backend.events.payload.EventsApiPayload;
 import com.slack.api.bolt.App;
@@ -22,18 +24,27 @@ import com.slack.api.methods.SlackApiException;
 import com.slack.api.methods.response.chat.ChatPostEphemeralResponse;
 import com.slack.api.methods.response.chat.ChatPostMessageResponse;
 import com.slack.api.methods.response.dialog.DialogOpenResponse;
-import com.slack.api.model.event.MessageChangedEvent;
 import com.slack.api.model.event.ReactionAddedEvent;
 import com.slack.api.model.event.ReactionRemovedEvent;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.annotation.PreDestroy;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.data.util.Pair;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.reactive.function.BodyInserters;
+import org.springframework.web.reactive.function.client.WebClient;
 
 @Component
 public class SlackOnBolt {
@@ -47,9 +58,11 @@ public class SlackOnBolt {
 
   private SocketModeApp socketApp;
   private final MongoDao mongoDao;
+  private final WebClient webClient;
 
-  public SlackOnBolt(MongoDao mongoDao) {
+  public SlackOnBolt(MongoDao mongoDao, WebClient webClient) {
     this.mongoDao = mongoDao;
+    this.webClient = webClient;
   }
 
   @Scheduled(initialDelay = 1000, fixedDelay=Long.MAX_VALUE)
@@ -57,26 +70,12 @@ public class SlackOnBolt {
     initDataSourceProxyFactory();
   }
 
-//  @PostConstruct
   public void initDataSourceProxyFactory() throws Exception {
     App app = new App();
 
     // сообщение в тред за эмодзи
     app.event(ReactionAddedEvent.class, this::emodzi);
     app.event(ReactionRemovedEvent.class, (payload, ctx) -> {
-      return ctx.ack();
-    });
-
-//    // сообщение с кнопками за сообщение
-//    // https://api.slack.com/messaging/interactivity#components
-//    app.event(MessageEvent.class, this::apply2);
-//    // обработка кликания по форме из ^
-//    app.blockAction("zp10", (req, ctx) -> {
-//      return ctx.ack();
-//    });
-
-    // апдейты сообщений
-    app.event(MessageChangedEvent.class, (payload, ctx) -> {
       return ctx.ack();
     });
 
@@ -124,6 +123,8 @@ public class SlackOnBolt {
     String tasksText = data.get("my_name_2");
     String estimationScaleId = data.get("my_name_3");
 
+    mongoDao.saveIfNotExists(new User(user.getId(), user.getName()));
+
     if ("new_scale".equals(estimationScaleId)) {
       EstimationScale estimationScale = new EstimationScale(
           "Своя шкала",
@@ -161,6 +162,8 @@ public class SlackOnBolt {
     var threadId = req.getPayload().getMessage().getThreadTs();
     var user = req.getPayload().getUser();
 
+    mongoDao.saveIfNotExists(new User(user.getId(), user.getName()));
+
     GameRoom gameRoom = mongoDao.getGameRoom(gameRoomId);
     EstimationScale estimationScale = mongoDao.getEstimationScale(gameRoom.getEstimationScaleId());
     Task nextTask = gameRoom.getNextTask().get();
@@ -177,6 +180,8 @@ public class SlackOnBolt {
     var threadId = req.getPayload().getMessage().getThreadTs();
     var user = req.getPayload().getUser();
     var selected = req.getPayload().getActions().get(0).getValue();
+
+    mongoDao.saveIfNotExists(new User(user.getId(), user.getName()));
 
 
     GameRoom gameRoom = mongoDao.getGameRoomByThreadId(threadId);
@@ -213,6 +218,8 @@ public class SlackOnBolt {
     var user = req.getPayload().getUser();
     var gameRoomId = req.getPayload().getActions().get(0).getValue();
 
+    mongoDao.saveIfNotExists(new User(user.getId(), user.getName()));
+
     GameRoom gameRoom = mongoDao.getGameRoom(gameRoomId);
     Task nextTask = gameRoom.getNextTask().get();
 
@@ -228,6 +235,8 @@ public class SlackOnBolt {
     var threadId = req.getPayload().getMessage().getThreadTs();
     var user = req.getPayload().getUser();
     var finalMark = req.getPayload().getActions().get(0).getValue();
+
+    mongoDao.saveIfNotExists(new User(user.getId(), user.getName()));
 
     GameRoom gameRoom = mongoDao.getGameRoomByThreadId(threadId);
     Task nextTask = gameRoom.getNextTask().get();
@@ -285,14 +294,126 @@ public class SlackOnBolt {
     var user = req.getPayload().getUser();
     var finalMark = req.getPayload().getActions().get(0).getValue();
 
+    mongoDao.saveIfNotExists(new User(user.getId(), user.getName()));
+
     GameRoom gameRoom = mongoDao.getGameRoomByThreadId(threadId);
 
-    var blocks = jiraDoneJson(gameRoom, user.getUsername(), "portfolioLink");
-    updateMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
+//    var blocks = jiraDoneJson(gameRoom, user.getUsername(), "portfolioLink");
+//    updateMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
 
     // + пост в жиру
+    User user1 = preapareUser(user.getId());
+
+//    postJiraTasks(user1, gameRoom.getTasks(), gameRoom.getTitle());
+
+    // пытаемся создать задачки в жире
+    // если до сюда дошли то уже и команда есть и задачи
+    String resp;
+    String originalInput = "";
+    String encodedString = Base64.getEncoder().encodeToString(originalInput.getBytes());
+
+    MultiValueMap<String, String> bodyValues = new LinkedMultiValueMap<>();
+    bodyValues.add("issueUpdates", """
+        [
+                {
+                    "fields": {
+                        "project": {
+                            "key": "HH"
+                        },
+                        "summary": "Тестовая задача",
+                        "description": "Creating of an issue using project keys and issue type names using the REST API",
+                        "issuetype": {
+                            "name": "Task"
+                        },
+                        "assignee":{"name":"l.vinogradov"},
+                        "customfield_10961": {"value": "Brandy"},
+                        "customfield_11212": 2.5
+                    }
+                }
+            ]
+        """);
+
+    try {
+      resp = webClient.post()
+          .uri(new URI("https://jira.hh.ru/rest/api/2/issue/bulk"))
+          .header("Content-Type", "application/json")
+          .header("Authorization", "Basic " + encodedString)
+          .body(BodyInserters.fromFormData(bodyValues))
+          .retrieve()
+          .bodyToMono(String.class)
+          .log()
+          .block();
+
+    } catch (URISyntaxException e) {
+      e.printStackTrace();
+      throw new RuntimeException("123");
+    }
 
     return ctx.ack();
+  }
+
+  public Pair<CrabTeam, CrabTeam.Mate> postJiraTasks(User user1, List<Task> tasks, String slackUserName) {
+    List<CrabTeam> resp;
+    try {
+      resp = webClient.get()
+          .uri(new URI("https://crab.pyn.ru/users"))
+          .header("Content-Type", "application/json")
+          .retrieve()
+          .bodyToMono(new ParameterizedTypeReference<List<CrabTeam>>() {})
+          .log()
+          .block();
+
+    } catch (URISyntaxException e) {
+      e.printStackTrace();
+      throw new RuntimeException("123");
+    }
+
+    return resp.stream()
+        .map(team -> team.activeMembers.stream().map(mate -> Pair.of(team, mate)))
+        .flatMap(Function.identity())
+        .filter(item -> ("@" + slackUserName).equals(item.getSecond().employee.slack))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  public User preapareUser(String userId) {
+    User user1 = mongoDao.getUserBySlackId(userId);
+    if (user1.getLdapUserName() == null || user1.getLdapTeamName() == null) {
+      Pair<CrabTeam, CrabTeam.Mate> crabUser = getCrabUser(user1.getSlackUserName());
+
+      user1.setLdapUserName(crabUser.getSecond().employee.login);
+      if (!crabUser.getFirst().name.startsWith("Команда ")) {
+        throw new RuntimeException("123");
+      }
+      user1.setLdapTeamName(crabUser.getFirst().name.substring(8));
+      mongoDao.save(user1);
+    }
+
+    return user1;
+  }
+
+  public Pair<CrabTeam, CrabTeam.Mate> getCrabUser(String slackUserName) {
+    List<CrabTeam> resp;
+    try {
+      resp = webClient.get()
+          .uri(new URI("https://crab.pyn.ru/users"))
+          .header("Content-Type", "application/json")
+          .retrieve()
+          .bodyToMono(new ParameterizedTypeReference<List<CrabTeam>>() {})
+          .log()
+          .block();
+
+    } catch (URISyntaxException e) {
+      e.printStackTrace();
+      throw new RuntimeException("123");
+    }
+
+    return resp.stream()
+        .map(team -> team.activeMembers.stream().map(mate -> Pair.of(team, mate)))
+        .flatMap(Function.identity())
+        .filter(item -> ("@" + slackUserName).equals(item.getSecond().employee.slack))
+        .findFirst()
+        .orElseThrow();
   }
 
 
@@ -304,7 +425,18 @@ public class SlackOnBolt {
 
 
 
-
+// JIRA
+//  так можно вытащить жира команды
+//  curl -X GET 'https://jira.hh.ru/rest/api/2/issue/createmeta?projectKeys=HH&issuetypeNames=Task&expand=projects.issuetypes.fields' \
+//      --header 'Accept: application/json' \
+//      --header 'Authorization: Basic c123=' \
+//
+//
+//  так можно поискать людей
+//  curl -X GET 'https://jira.hh.ru/rest/api/2/user/search?username=r.kozlov' \
+//      --header 'Accept: application/json' \
+//      --header 'Authorization: Basic c1231=' \
+//
 
 
 
