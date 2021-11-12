@@ -58,7 +58,6 @@
 //    System.out.println(req);
 //    WsRequestMessage request = rasparsit(req, WsRequestMessage.class);
 //
-//    //TODO make some magic
 //    CommonWsRequest wsRequest = rasparsit(req, CommonWsRequest.class);
 //    if (wsRequest instanceof InteractionRequest) {
 //      processWsRequest((InteractionRequest) wsRequest);

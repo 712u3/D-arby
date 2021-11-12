@@ -4,8 +4,6 @@ import static com.example.darby.dto.wsrequest.WsRequestType.API_EVENT;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonTypeName;
 
-//TODO decrease boilerplate
-//TODO fix for fail in compile on unknown value
 @JsonTypeName(value = "hello")
 public class HelloRequest extends CommonWsRequest {
   public static final WsRequestType TYPE = API_EVENT;

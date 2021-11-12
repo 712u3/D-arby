@@ -28,7 +28,6 @@
 //    this.slackRequestHandler = slackRequestHandler;
 //  }
 //
-//  // TODO add logging and reconnect
 //  @PostConstruct
 //  private void initBoughtResumeStatsLogger() throws URISyntaxException {
 //    webClient.post()

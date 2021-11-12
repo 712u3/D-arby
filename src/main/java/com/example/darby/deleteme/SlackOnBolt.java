@@ -11,6 +11,7 @@ import com.example.darby.dto.JiraIssuesCreated;
 import com.slack.api.app_backend.dialogs.payload.DialogSubmissionPayload;
 import com.slack.api.app_backend.events.payload.EventsApiPayload;
 import com.slack.api.app_backend.interactive_components.payload.BlockActionPayload;
+import com.slack.api.app_backend.interactive_components.payload.GlobalShortcutPayload;
 import com.slack.api.bolt.App;
 import com.slack.api.bolt.AppConfig;
 import com.slack.api.bolt.context.builtin.ActionContext;
@@ -31,10 +32,12 @@ import com.slack.api.model.event.ReactionRemovedEvent;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -50,7 +53,10 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 @Component
 public class SlackOnBolt {
-  private static final String CREATE_ROOM_MODAL = "darby_play_id"; // set in interface
+  private static final String CREATE_ROOM_SHORTCUT = "create_room_shortcut";
+  private static final String ADD_TASK_SHORTCUT = "add_task_shortcut";
+  private static final String ROLL_SHORTCUT = "roll_shortcut";
+  private static final String ROLL_EVENT = "roll_event";
   private static final String CREATE_ROOM_REQUEST_EVENT = "create_room_request_event";
   private static final String NEXT_TASK_EVENT = "next_task_event";
   private static final String POLL_OPTION_SELECTED_EVENT = "poll_option_selected";
@@ -94,13 +100,17 @@ public class SlackOnBolt {
     app.event(ReactionRemovedEvent.class, (payload, ctx) -> ctx.ack());
 
     // portfolio flow
-    app.globalShortcut(CREATE_ROOM_MODAL, this::handleCreateRoomShortcut);
+    app.globalShortcut(CREATE_ROOM_SHORTCUT, this::handleCreateRoomShortcut);
     app.dialogSubmission(CREATE_ROOM_REQUEST_EVENT, this::handleCreateGameRoom);
     app.blockAction(NEXT_TASK_EVENT, this::handleNextTask);
     app.blockAction(POLL_OPTION_SELECTED_PATTERN, this::handlePollSelect);
     app.blockAction(POLL_ENDED_EVENT, this::handlePollStop);
     app.blockAction(TASK_ESTIMATED_EVENT, this::handleTaskDone);
     app.blockAction(CREATE_JIRA_ISSUE_EVENT, this::handleJiraButton);
+
+    // roll
+    app.globalShortcut(ROLL_SHORTCUT, this::handleRollShortcut);
+    app.dialogSubmission(ROLL_EVENT, this::handleRollEvent);
 
     socketApp = new SocketModeApp(xappToken, app);
     socketApp.start();
@@ -844,6 +854,82 @@ public class SlackOnBolt {
                 }
             }
           """.formatted(portfolioKey, issueKey);
+  }
+
+  private Response handleRollShortcut(
+      GlobalShortcutRequest req,
+      GlobalShortcutContext ctx
+  ) throws SlackApiException, IOException {
+    String modal = """
+        {
+            "callback_id": "%s",
+            "title": "Roll",
+            "submit_label": "Go",
+            "elements": [
+                {
+                    "label": "Диапазон",
+                    "type": "text",
+                    "name": "roll_range",
+                    "hint": "через запятую или пробел, число/два числа/список строк"
+                }
+            ]
+        }
+        """.formatted(ROLL_EVENT);
+
+    DialogOpenResponse response = ctx.client().dialogOpen(r -> r
+        .triggerId(req.getPayload().getTriggerId())
+        .dialogAsString(modal));
+
+    if (!response.isOk()) {
+      System.out.println("dialogOpen failed: " + response.getError());
+    }
+
+    return ctx.ack();
+  }
+
+  private Response handleRollEvent(
+      DialogSubmissionRequest req,
+      DialogSubmissionContext ctx
+  ) throws SlackApiException, IOException {
+    DialogSubmissionPayload.Channel slackChannel = req.getPayload().getChannel();
+    Map<String, String> formData = req.getPayload().getSubmission();
+    List<String> rollRange = Arrays.stream(formData.get("roll_range").split("[\\s,]+")).collect(Collectors.toList());
+
+    String resultPrefix = "roll " + rollRange + ": ";
+    String result;
+
+    if (rollRange.size() == 0 || (rollRange.size() == 1 && !isInt(rollRange.get(0)))) { // пусто либо одно нечисло
+      return ctx.ack();
+    } else if (rollRange.size() == 1 && isInt(rollRange.get(0))) { // одно число
+      int range_begin = 0;
+      int range_end = Integer.parseInt(rollRange.get(0));
+      result = String.valueOf(ThreadLocalRandom.current().nextInt(range_begin, range_end + 1));
+    } else if (rollRange.size() == 2 && isInt(rollRange.get(0)) && isInt(rollRange.get(1)) ) { // два числа
+      int range_begin = Integer.parseInt(rollRange.get(0));
+      int range_end = Integer.parseInt(rollRange.get(1));
+      result = String.valueOf(ThreadLocalRandom.current().nextInt(range_begin, range_end + 1));
+    } else { // много строк
+      int idx = ThreadLocalRandom.current().nextInt(0, rollRange.size());
+      result = rollRange.get(idx);
+    }
+
+    ChatPostMessageResponse response = ctx.client().chatPostMessage(r -> r
+        .channel(slackChannel.getId())
+        .text(resultPrefix + result));
+    if (!response.isOk()) {
+      System.out.println("chatPostMessage failed: " + response.getError());
+      return ctx.ack();
+    }
+    return ctx.ack();
+  }
+
+  static boolean isInt(String s) {
+    try {
+      int i = Integer.parseInt(s);
+      return true;
+    } catch(NumberFormatException er) {
+      return false;
+    }
   }
 
 }
