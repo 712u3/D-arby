@@ -18,3 +18,8 @@ Connect to the mongodb (assuming you are running mongo in Docker container):
 ```
 docker exec -ti mongodb mongosh
 ```
+
+```
+./gradlew jibDockerBuild
+docker image inspect darby:0.0.1-SNAPSHOT
+```

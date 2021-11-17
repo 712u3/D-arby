@@ -1,17 +1,18 @@
-package com.example.darby.deleteme;
+package com.example.darby.bolt;
 
+//import com.example.darby.dao.H2Dao;
+//import com.example.darby.dao.H2Repository;
 import com.example.darby.dao.MongoDao;
-import com.example.darby.documents.EstimationScale;
-import com.example.darby.documents.GameRoom;
-import com.example.darby.documents.Task;
-import com.example.darby.documents.TaskEstimation;
-import com.example.darby.documents.User;
+import com.example.darby.document.EstimationScale;
+import com.example.darby.document.GameRoom;
+import com.example.darby.document.Task;
+import com.example.darby.document.TaskEstimation;
+import com.example.darby.document.User;
 import com.example.darby.dto.CrabTeam;
 import com.example.darby.dto.JiraIssuesCreated;
 import com.slack.api.app_backend.dialogs.payload.DialogSubmissionPayload;
 import com.slack.api.app_backend.events.payload.EventsApiPayload;
 import com.slack.api.app_backend.interactive_components.payload.BlockActionPayload;
-import com.slack.api.app_backend.interactive_components.payload.GlobalShortcutPayload;
 import com.slack.api.bolt.App;
 import com.slack.api.bolt.AppConfig;
 import com.slack.api.bolt.context.builtin.ActionContext;
@@ -27,6 +28,7 @@ import com.slack.api.methods.MethodsClient;
 import com.slack.api.methods.SlackApiException;
 import com.slack.api.methods.response.chat.ChatPostMessageResponse;
 import com.slack.api.methods.response.dialog.DialogOpenResponse;
+import com.slack.api.model.event.MessageEvent;
 import com.slack.api.model.event.ReactionAddedEvent;
 import com.slack.api.model.event.ReactionRemovedEvent;
 import java.io.IOException;
@@ -69,19 +71,19 @@ public class SlackOnBolt {
   private final Pattern POLL_OPTION_SELECTED_PATTERN = Pattern.compile("^" + POLL_OPTION_SELECTED_EVENT + "-\\w+$");
 
   private SocketModeApp socketApp;
-  private final MongoDao mongoDao;
+  private final MongoDao dao;
   private final WebClient webClient;
   private final String jiraToken;
   private final String xoxbToken;
   private final String xappToken;
 
-  public SlackOnBolt(MongoDao mongoDao,
+  public SlackOnBolt(MongoDao dao,
                      WebClient webClient,
                      @Value("${jira-username}") String jiraUsername,
                      @Value("${jira-password}") String jiraPassword,
                      @Value("${xoxb-token}") String xoxbToken,
                      @Value("${xapp-token}") String xappToken) {
-    this.mongoDao = mongoDao;
+    this.dao = dao;
     this.webClient = webClient;
 
     String jiraCred = jiraUsername + ":" + jiraPassword;
@@ -98,6 +100,7 @@ public class SlackOnBolt {
     // stub
     app.event(ReactionAddedEvent.class, this::emodzi);
     app.event(ReactionRemovedEvent.class, (payload, ctx) -> ctx.ack());
+    app.event(MessageEvent.class, (payload, ctx) -> ctx.ack());
 
     // portfolio flow
     app.globalShortcut(CREATE_ROOM_SHORTCUT, this::handleCreateRoomShortcut);
@@ -125,7 +128,7 @@ public class SlackOnBolt {
       GlobalShortcutRequest req,
       GlobalShortcutContext ctx
   ) throws SlackApiException, IOException {
-    List<EstimationScale> estimationScales = mongoDao.getAllEstimationScales(req.getPayload().getUser().getId());
+    List<EstimationScale> estimationScales = dao.getAllEstimationScales(req.getPayload().getUser().getId());
     String modal = makeRoomCreationModalBody(estimationScales);
 
     DialogOpenResponse response = ctx.client().dialogOpen(r -> r
@@ -151,11 +154,11 @@ public class SlackOnBolt {
     String estimationScaleId = formData.get("estimation_scale_id");
     String newEstimationScale = formData.get("new_estimation_scale");
 
-    mongoDao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
+    dao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
 
     if (estimationScaleId.equals("new_scale")) {
       EstimationScale estimationScale = new EstimationScale("Своя шкала", List.of(newEstimationScale.split("[\\s,]+")));
-      estimationScaleId = mongoDao.getEstimationScaleOrSave(estimationScale);
+      estimationScaleId = dao.getEstimationScaleOrSave(estimationScale);
     }
 
     ChatPostMessageResponse response = ctx.client().chatPostMessage(r -> r
@@ -170,7 +173,7 @@ public class SlackOnBolt {
     List<Task> tasks = tasksText.lines().map(Task::new).collect(Collectors.toList());
     GameRoom gameRoom = new GameRoom(portfolioKey, estimationScaleId, slackUser.getId(), slackChannel.getId(), threadId,
         tasks);
-    String gameRoomId = mongoDao.save(gameRoom).getId();
+    String gameRoomId = dao.save(gameRoom).getId();
 
     postNextTaskButton(ctx.client(), gameRoomId, slackChannel.getId(), threadId);
 
@@ -183,10 +186,10 @@ public class SlackOnBolt {
     String messageId = req.getPayload().getContainer().getMessageTs();
     BlockActionPayload.User slackUser = req.getPayload().getUser();
 
-    mongoDao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
+    dao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
 
-    GameRoom gameRoom = mongoDao.getGameRoom(gameRoomId);
-    EstimationScale estimationScale = mongoDao.getEstimationScale(gameRoom.getEstimationScaleId());
+    GameRoom gameRoom = dao.getGameRoom(gameRoomId);
+    EstimationScale estimationScale = dao.getEstimationScale(gameRoom.getEstimationScaleId());
     Task nextTask = gameRoom.getNextTask()
         .get(); // в первый раз таска есть, в остальные разы постим только если есть некст
 
@@ -204,10 +207,10 @@ public class SlackOnBolt {
     BlockActionPayload.User slackUser = req.getPayload().getUser();
     String selected = req.getPayload().getActions().get(0).getValue();
 
-    mongoDao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
+    dao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
 
-    GameRoom gameRoom = mongoDao.getGameRoomByThreadId(threadId);
-    EstimationScale estimationScale = mongoDao.getEstimationScale(gameRoom.getEstimationScaleId());
+    GameRoom gameRoom = dao.getGameRoomByThreadId(threadId);
+    EstimationScale estimationScale = dao.getEstimationScale(gameRoom.getEstimationScaleId());
     Task currentTask = gameRoom.getNextTask().get();
 
     // race condition?
@@ -219,7 +222,7 @@ public class SlackOnBolt {
     } else {
       lastUserEstimationOpt.get().setMark(selected);
     }
-    mongoDao.save(gameRoom);
+    dao.save(gameRoom);
 
     List<String> usersDone = currentTask.getEstimations().stream()
         .map(TaskEstimation::getUserName)
@@ -240,9 +243,9 @@ public class SlackOnBolt {
     BlockActionPayload.User slackUser = req.getPayload().getUser();
     String gameRoomId = req.getPayload().getActions().get(0).getValue();
 
-    mongoDao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
+    dao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
 
-    GameRoom gameRoom = mongoDao.getGameRoom(gameRoomId);
+    GameRoom gameRoom = dao.getGameRoom(gameRoomId);
     Task currentTask = gameRoom.getNextTask().get();
 
     String blocks = makePollEndedBody(slackUser.getUsername(), currentTask.getEstimations());
@@ -258,13 +261,13 @@ public class SlackOnBolt {
     BlockActionPayload.User slackUser = req.getPayload().getUser();
     String finalMark = req.getPayload().getActions().get(0).getValue();
 
-    mongoDao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
+    dao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
 
-    GameRoom gameRoom = mongoDao.getGameRoomByThreadId(threadId);
+    GameRoom gameRoom = dao.getGameRoomByThreadId(threadId);
     Task currentTask = gameRoom.getNextTask().get();
 
     currentTask.setFinalMark(finalMark);
-    mongoDao.save(gameRoom);
+    dao.save(gameRoom);
 
     String blocks = makeTaskEndedBody(slackUser.getUsername(), currentTask.getTitle(), currentTask.getEstimations(),
         finalMark);
@@ -292,8 +295,8 @@ public class SlackOnBolt {
     String threadId = req.getPayload().getMessage().getThreadTs();
     BlockActionPayload.User slackUser = req.getPayload().getUser();
 
-    mongoDao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
-    GameRoom gameRoom = mongoDao.getGameRoomByThreadId(threadId);
+    dao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
+    GameRoom gameRoom = dao.getGameRoomByThreadId(threadId);
 
     User user = prepareLdapUser(slackUser.getId());
     createJiraIssues(gameRoom, user);
@@ -355,7 +358,7 @@ public class SlackOnBolt {
   }
 
   public User prepareLdapUser(String userId) {
-    User user = mongoDao.getUserBySlackId(userId);
+    User user = dao.getUserBySlackId(userId);
     if (user.getLdapUserName() == null || user.getLdapTeamName() == null) {
       Pair<CrabTeam, CrabTeam.Mate> crabUser = getCrabUser(user.getSlackUserName());
 
@@ -364,7 +367,7 @@ public class SlackOnBolt {
         throw new RuntimeException("Team not found");
       }
       user.setLdapTeamName(crabUser.getFirst().name.substring(8));
-      mongoDao.save(user);
+      dao.save(user);
     }
 
     return user;

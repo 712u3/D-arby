@@ -1,4 +1,4 @@
-package com.example.darby.documents;
+package com.example.darby.document;
 
 import java.util.List;
 import org.springframework.data.annotation.Id;
@@ -11,12 +11,13 @@ public class EstimationScale {
   private String id;
   private String name;
   private List<String> marks;
-  private Boolean primary;
+  private Boolean basic;
 
   public EstimationScale(String name, List<String> marks) {
     this.name = name;
     this.marks = marks;
-    this.primary = false;
+    this.basic = false;
+    this.basic = true;
   }
 
   public String getId() {
@@ -43,11 +44,11 @@ public class EstimationScale {
     this.marks = marks;
   }
 
-  public Boolean getPrimary() {
-    return primary;
+  public Boolean getBasic() {
+    return basic;
   }
 
-  public void setPrimary(Boolean primary) {
-    this.primary = primary;
+  public void setBasic(Boolean basic) {
+    this.basic = basic;
   }
 }

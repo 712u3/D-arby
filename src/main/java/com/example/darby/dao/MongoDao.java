@@ -1,8 +1,8 @@
 package com.example.darby.dao;
 
-import com.example.darby.documents.EstimationScale;
-import com.example.darby.documents.GameRoom;
-import com.example.darby.documents.User;
+import com.example.darby.document.EstimationScale;
+import com.example.darby.document.GameRoom;
+import com.example.darby.document.User;
 import java.util.List;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;

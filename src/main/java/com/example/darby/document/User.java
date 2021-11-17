@@ -1,4 +1,4 @@
-package com.example.darby.documents;
+package com.example.darby.document;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;

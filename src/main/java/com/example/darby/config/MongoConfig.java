@@ -11,7 +11,7 @@ public class MongoConfig {
 
   @Bean
   public ReactiveMongoTemplate reactiveMongoTemplate() {
-    MongoClient mongoClient = MongoClients.create();
+    MongoClient mongoClient = MongoClients.create("mongodb://mongodb");
     return new ReactiveMongoTemplate(mongoClient, "test");
   }
 }
