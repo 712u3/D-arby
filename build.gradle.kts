@@ -38,6 +38,7 @@ tasks.getByName<Test>("test") {
 
 jib {
     from.image = "eclipse-temurin:17" // -alpine
+    to.image = "registry.pyn.ru/darby"
     to.tags = setOf(project.version.toString(), "latest")
     container {
         ports = listOf("8082")

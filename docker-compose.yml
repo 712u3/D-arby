@@ -1,7 +1,7 @@
 version: "3.8"
 services:
   darby-app:
-    image: darby:latest
+    image: registry.pyn.ru/darby:latest
     ports:
       - 8082:8082
     volumes:

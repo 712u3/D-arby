@@ -12,7 +12,6 @@ import com.slack.api.app_backend.dialogs.payload.DialogSubmissionPayload;
 import com.slack.api.app_backend.events.payload.EventsApiPayload;
 import com.slack.api.app_backend.interactive_components.payload.BlockActionPayload;
 import com.slack.api.bolt.App;
-import com.slack.api.bolt.AppConfig;
 import com.slack.api.bolt.context.builtin.ActionContext;
 import com.slack.api.bolt.context.builtin.DialogSubmissionContext;
 import com.slack.api.bolt.context.builtin.EventContext;
@@ -72,51 +71,48 @@ public class SlackOnBolt {
 
   private SocketModeApp socketApp;
   private final H2Dao dao;
+  private final App slackApp;
   private final WebClient webClient;
   private final String jiraToken;
-  private final String xoxbToken;
   private final String xappToken;
 
   public SlackOnBolt(H2Dao dao,
                      WebClient webClient,
+                     App slackApp,
                      @Value("${jira-username}") String jiraUsername,
                      @Value("${jira-password}") String jiraPassword,
-                     @Value("${xoxb-token}") String xoxbToken,
                      @Value("${xapp-token}") String xappToken) {
     this.dao = dao;
     this.webClient = webClient;
+    this.slackApp = slackApp;
 
     String jiraCred = jiraUsername + ":" + jiraPassword;
     this.jiraToken = Base64.getEncoder().encodeToString(jiraCred.getBytes());
-    this.xoxbToken = xoxbToken;
     this.xappToken = xappToken;
   }
 
   @Scheduled(initialDelay = 1000, fixedDelay=Long.MAX_VALUE)
   public void init() throws Exception {
-    AppConfig appConfig = AppConfig.builder().singleTeamBotToken(xoxbToken).build();
-    App app = new App(appConfig);
-
     // stub
-    app.event(ReactionAddedEvent.class, this::emodzi);
-    app.event(ReactionRemovedEvent.class, (payload, ctx) -> ctx.ack());
-    app.event(MessageEvent.class, (payload, ctx) -> ctx.ack());
-    app.event(MessageChangedEvent.class, (payload, ctx) -> ctx.ack());
+    slackApp.event(ReactionAddedEvent.class, this::emodzi);
+    slackApp.event(ReactionRemovedEvent.class, (payload, ctx) -> ctx.ack());
+    slackApp.event(MessageEvent.class, (payload, ctx) -> ctx.ack());
+    slackApp.event(MessageChangedEvent.class, (payload, ctx) -> ctx.ack());
 
     // portfolio flow
-    app.globalShortcut(CREATE_ROOM_SHORTCUT, this::handleCreateRoomShortcut);
-    app.dialogSubmission(CREATE_ROOM_REQUEST_EVENT, this::handleCreateGameRoom);
-    app.blockAction(NEXT_TASK_EVENT, this::handleNextTask);
-    app.blockAction(POLL_OPTION_SELECTED_PATTERN, this::handlePollSelect);
-    app.blockAction(POLL_ENDED_EVENT, this::handlePollStop);
-    app.blockAction(TASK_ESTIMATED_EVENT, this::handleTaskDone);
-    app.blockAction(CREATE_JIRA_ISSUE_EVENT, this::handleJiraButton);
+    slackApp.globalShortcut(CREATE_ROOM_SHORTCUT, this::handleCreateRoomShortcut);
+    slackApp.dialogSubmission(CREATE_ROOM_REQUEST_EVENT, this::handleCreateGameRoom);
+    slackApp.blockAction(NEXT_TASK_EVENT, this::handleNextTask);
+    slackApp.blockAction(POLL_OPTION_SELECTED_PATTERN, this::handlePollSelect);
+    slackApp.blockAction(POLL_ENDED_EVENT, this::handlePollStop);
+    slackApp.blockAction(TASK_ESTIMATED_EVENT, this::handleTaskDone);
+    slackApp.blockAction(CREATE_JIRA_ISSUE_EVENT, this::handleJiraButton);
 
     // roll
-    app.globalShortcut(ROLL_SHORTCUT, this::handleRollShortcut);
-    app.dialogSubmission(ROLL_EVENT, this::handleRollEvent);
+    slackApp.globalShortcut(ROLL_SHORTCUT, this::handleRollShortcut);
+    slackApp.dialogSubmission(ROLL_EVENT, this::handleRollEvent);
 
-    socketApp = new SocketModeApp(xappToken, app);
+    socketApp = new SocketModeApp(xappToken, slackApp);
     socketApp.start();
   }
 
