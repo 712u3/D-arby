@@ -1,13 +1,11 @@
 package com.example.darby.bolt;
 
-//import com.example.darby.dao.H2Dao;
-//import com.example.darby.dao.H2Repository;
-import com.example.darby.dao.MongoDao;
+import com.example.darby.dao.H2Dao;
 import com.example.darby.document.EstimationScale;
 import com.example.darby.document.GameRoom;
 import com.example.darby.document.Task;
 import com.example.darby.document.TaskEstimation;
-import com.example.darby.document.User;
+import com.example.darby.document.HhUser;
 import com.example.darby.dto.CrabTeam;
 import com.example.darby.dto.JiraIssuesCreated;
 import com.slack.api.app_backend.dialogs.payload.DialogSubmissionPayload;
@@ -28,6 +26,7 @@ import com.slack.api.methods.MethodsClient;
 import com.slack.api.methods.SlackApiException;
 import com.slack.api.methods.response.chat.ChatPostMessageResponse;
 import com.slack.api.methods.response.dialog.DialogOpenResponse;
+import com.slack.api.model.event.MessageChangedEvent;
 import com.slack.api.model.event.MessageEvent;
 import com.slack.api.model.event.ReactionAddedEvent;
 import com.slack.api.model.event.ReactionRemovedEvent;
@@ -40,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -71,13 +71,13 @@ public class SlackOnBolt {
   private final Pattern POLL_OPTION_SELECTED_PATTERN = Pattern.compile("^" + POLL_OPTION_SELECTED_EVENT + "-\\w+$");
 
   private SocketModeApp socketApp;
-  private final MongoDao dao;
+  private final H2Dao dao;
   private final WebClient webClient;
   private final String jiraToken;
   private final String xoxbToken;
   private final String xappToken;
 
-  public SlackOnBolt(MongoDao dao,
+  public SlackOnBolt(H2Dao dao,
                      WebClient webClient,
                      @Value("${jira-username}") String jiraUsername,
                      @Value("${jira-password}") String jiraPassword,
@@ -101,6 +101,7 @@ public class SlackOnBolt {
     app.event(ReactionAddedEvent.class, this::emodzi);
     app.event(ReactionRemovedEvent.class, (payload, ctx) -> ctx.ack());
     app.event(MessageEvent.class, (payload, ctx) -> ctx.ack());
+    app.event(MessageChangedEvent.class, (payload, ctx) -> ctx.ack());
 
     // portfolio flow
     app.globalShortcut(CREATE_ROOM_SHORTCUT, this::handleCreateRoomShortcut);
@@ -151,14 +152,20 @@ public class SlackOnBolt {
     Map<String, String> formData = req.getPayload().getSubmission();
     String portfolioKey = extractPortfolioKey(formData.get("portfolio_key")).orElseThrow();
     String tasksText = formData.get("tasks_text");
-    String estimationScaleId = formData.get("estimation_scale_id");
+    String formEstimationScaleId = formData.get("estimation_scale_id");
     String newEstimationScale = formData.get("new_estimation_scale");
 
-    dao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
+    dao.saveUserIfNotExists(new HhUser(slackUser.getId(), slackUser.getName()));
 
-    if (estimationScaleId.equals("new_scale")) {
+    Integer estimationScaleId;
+    if (formEstimationScaleId.equals("new_scale")) {
       EstimationScale estimationScale = new EstimationScale("Своя шкала", List.of(newEstimationScale.split("[\\s,]+")));
-      estimationScaleId = dao.getEstimationScaleOrSave(estimationScale);
+      if (estimationScale.getMarks().size() == 0) {
+        return ctx.ack();
+      }
+      estimationScaleId = dao.saveEstimationScaleId(estimationScale);
+    } else {
+      estimationScaleId = Integer.valueOf(formEstimationScaleId);
     }
 
     ChatPostMessageResponse response = ctx.client().chatPostMessage(r -> r
@@ -170,10 +177,12 @@ public class SlackOnBolt {
     }
     String threadId = response.getTs();
 
-    List<Task> tasks = tasksText.lines().map(Task::new).collect(Collectors.toList());
-    GameRoom gameRoom = new GameRoom(portfolioKey, estimationScaleId, slackUser.getId(), slackChannel.getId(), threadId,
-        tasks);
-    String gameRoomId = dao.save(gameRoom).getId();
+    GameRoom gameRoom = new GameRoom(portfolioKey, estimationScaleId, slackUser.getId(), slackChannel.getId(), threadId);
+    Integer gameRoomId = dao.saveGameRoom(gameRoom);
+    AtomicInteger idx = new AtomicInteger();
+    List<Task> tasks = tasksText.lines().map(title -> new Task(gameRoomId, title, idx.getAndIncrement()))
+        .collect(Collectors.toList());
+    dao.saveTasks(tasks);
 
     postNextTaskButton(ctx.client(), gameRoomId, slackChannel.getId(), threadId);
 
@@ -186,14 +195,16 @@ public class SlackOnBolt {
     String messageId = req.getPayload().getContainer().getMessageTs();
     BlockActionPayload.User slackUser = req.getPayload().getUser();
 
-    dao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
+    dao.saveUserIfNotExists(new HhUser(slackUser.getId(), slackUser.getName()));
 
-    GameRoom gameRoom = dao.getGameRoom(gameRoomId);
+    GameRoom gameRoom = dao.getGameRoom(Integer.valueOf(gameRoomId));
     EstimationScale estimationScale = dao.getEstimationScale(gameRoom.getEstimationScaleId());
-    Task nextTask = gameRoom.getNextTask()
-        .get(); // в первый раз таска есть, в остальные разы постим только если есть некст
+    // таска должна быть всегда тк
+    // в первый раз таска точно есть,
+    // в остальные разы постим кнопку только если есть
+    Task currentTask = dao.getCurrentTask(Integer.valueOf(gameRoomId));
 
-    String updBlocks = makePollStartedBody(slackUser.getUsername(), gameRoomId, nextTask.getTitle(),
+    String updBlocks = makePollStartedBody(slackUser.getUsername(), gameRoomId, currentTask.getTitle(),
         estimationScale.getMarks());
     updateSlackMessage(ctx.client(), channelId, messageId, "голосование", updBlocks);
 
@@ -207,28 +218,15 @@ public class SlackOnBolt {
     BlockActionPayload.User slackUser = req.getPayload().getUser();
     String selected = req.getPayload().getActions().get(0).getValue();
 
-    dao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
+    dao.saveUserIfNotExists(new HhUser(slackUser.getId(), slackUser.getName()));
 
     GameRoom gameRoom = dao.getGameRoomByThreadId(threadId);
     EstimationScale estimationScale = dao.getEstimationScale(gameRoom.getEstimationScaleId());
-    Task currentTask = gameRoom.getNextTask().get();
+    Task currentTask = dao.getCurrentTask(gameRoom.getId());
+    dao.updateOrSaveTaskEstimation(currentTask.getId(), slackUser.getUsername(), selected);
 
-    // race condition?
-    Optional<TaskEstimation> lastUserEstimationOpt = currentTask.getEstimations().stream()
-        .filter(e -> e.getUserName().equals(slackUser.getUsername()))
-        .findFirst();
-    if (lastUserEstimationOpt.isEmpty()) {
-      currentTask.getEstimations().add(new TaskEstimation(slackUser.getUsername(), selected));
-    } else {
-      lastUserEstimationOpt.get().setMark(selected);
-    }
-    dao.save(gameRoom);
-
-    List<String> usersDone = currentTask.getEstimations().stream()
-        .map(TaskEstimation::getUserName)
-        .filter(userName -> !userName.equals(slackUser.getUsername()))
-        .collect(Collectors.toList());
-    usersDone.add(slackUser.getUsername());
+    List<String> usersDone = dao.getTaskEstimations(currentTask.getId()).stream()
+        .map(TaskEstimation::getSlackUserName).collect(Collectors.toList());
 
     String updBlocks = malePollUpdatedBody(gameRoom.getId(), currentTask.getTitle(), estimationScale.getMarks(),
         usersDone);
@@ -243,12 +241,13 @@ public class SlackOnBolt {
     BlockActionPayload.User slackUser = req.getPayload().getUser();
     String gameRoomId = req.getPayload().getActions().get(0).getValue();
 
-    dao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
+    dao.saveUserIfNotExists(new HhUser(slackUser.getId(), slackUser.getName()));
 
-    GameRoom gameRoom = dao.getGameRoom(gameRoomId);
-    Task currentTask = gameRoom.getNextTask().get();
+    GameRoom gameRoom = dao.getGameRoom(Integer.valueOf(gameRoomId));
+    Task currentTask = dao.getCurrentTask(gameRoom.getId());
+    List<TaskEstimation> taskEstimations = dao.getTaskEstimations(currentTask.getId());
 
-    String blocks = makePollEndedBody(slackUser.getUsername(), currentTask.getEstimations());
+    String blocks = makePollEndedBody(slackUser.getUsername(), taskEstimations);
     updateSlackMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
 
     return ctx.ack();
@@ -261,22 +260,23 @@ public class SlackOnBolt {
     BlockActionPayload.User slackUser = req.getPayload().getUser();
     String finalMark = req.getPayload().getActions().get(0).getValue();
 
-    dao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
+    dao.saveUserIfNotExists(new HhUser(slackUser.getId(), slackUser.getName()));
 
     GameRoom gameRoom = dao.getGameRoomByThreadId(threadId);
-    Task currentTask = gameRoom.getNextTask().get();
-
+    Task currentTask = dao.getCurrentTask(gameRoom.getId());
     currentTask.setFinalMark(finalMark);
-    dao.save(gameRoom);
+    dao.updateTask(currentTask);
+    List<TaskEstimation> taskEstimations = dao.getTaskEstimations(currentTask.getId());
 
-    String blocks = makeTaskEndedBody(slackUser.getUsername(), currentTask.getTitle(), currentTask.getEstimations(),
-        finalMark);
+    String blocks = makeTaskEndedBody(slackUser.getUsername(), currentTask.getTitle(), taskEstimations, finalMark);
     updateSlackMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
 
-    if (gameRoom.getNextTask().isPresent()) {
+    currentTask = dao.getCurrentTask(gameRoom.getId());
+    if (currentTask != null) {
       postNextTaskButton(ctx.client(), gameRoom.getId(), channel.getId(), threadId);
     } else {
-      String blocks2 = makeGameRoomEndedBody(gameRoom);
+      List<Task> tasks = dao.getGameRoomTasks(gameRoom.getId());
+      String blocks2 = makeGameRoomEndedBody(gameRoom.getId(), tasks);
       ChatPostMessageResponse response = ctx.client().chatPostMessage(r -> r
           .channel(channel.getId())
           .threadTs(threadId)
@@ -295,14 +295,15 @@ public class SlackOnBolt {
     String threadId = req.getPayload().getMessage().getThreadTs();
     BlockActionPayload.User slackUser = req.getPayload().getUser();
 
-    dao.saveUserIfNotExists(new User(slackUser.getId(), slackUser.getName()));
+    dao.saveUserIfNotExists(new HhUser(slackUser.getId(), slackUser.getName()));
     GameRoom gameRoom = dao.getGameRoomByThreadId(threadId);
+    List<Task> tasks = dao.getGameRoomTasks(gameRoom.getId());
 
-    User user = prepareLdapUser(slackUser.getId());
-    createJiraIssues(gameRoom, user);
+    HhUser user = prepareLdapUser(slackUser.getId());
+    createJiraIssues(gameRoom.getPortfolioKey(), tasks, user);
 
     String portfolioLink = "https://jira.hh.ru/browse/" + gameRoom.getPortfolioKey();
-    String blocks = makeJiraDoneBody(gameRoom, slackUser.getUsername(), portfolioLink);
+    String blocks = makeJiraDoneBody(tasks, slackUser.getUsername(), portfolioLink);
     updateSlackMessage(ctx.client(), channel.getId(), messageId, "голосование", blocks);
 
     return ctx.ack();
@@ -324,7 +325,7 @@ public class SlackOnBolt {
 
   private void postNextTaskButton(
       MethodsClient client,
-      String gameRoomId,
+      Integer gameRoomId,
       String channelId,
       String threadId
   ) throws SlackApiException, IOException {
@@ -357,8 +358,8 @@ public class SlackOnBolt {
     }
   }
 
-  public User prepareLdapUser(String userId) {
-    User user = dao.getUserBySlackId(userId);
+  public HhUser prepareLdapUser(String userId) {
+    HhUser user = dao.getUserBySlackId(userId);
     if (user.getLdapUserName() == null || user.getLdapTeamName() == null) {
       Pair<CrabTeam, CrabTeam.Mate> crabUser = getCrabUser(user.getSlackUserName());
 
@@ -367,7 +368,7 @@ public class SlackOnBolt {
         throw new RuntimeException("Team not found");
       }
       user.setLdapTeamName(crabUser.getFirst().name.substring(8));
-      dao.save(user);
+      dao.updateUser(user);
     }
 
     return user;
@@ -396,10 +397,10 @@ public class SlackOnBolt {
         .orElseThrow();
   }
 
-  private void createJiraIssues(GameRoom gameRoom, User user) {
+  private void createJiraIssues(String portfolioKey, List<Task> tasks, HhUser user) {
     JiraIssuesCreated creationResponse;
     try {
-      String issuesBody = makeJiraIssueBody(gameRoom, user);
+      String issuesBody = makeJiraIssueBody(tasks, user);
       creationResponse = webClient.post()
           .uri(new URI("https://jira.hh.ru/rest/api/2/issue/bulk"))
           .header("Content-Type", "application/json")
@@ -416,7 +417,7 @@ public class SlackOnBolt {
 
     creationResponse.issues.forEach(issue -> {
       try {
-        String issueLinkBody = makeJiraIssueLinkBody(issue.key, gameRoom.getPortfolioKey());
+        String issueLinkBody = makeJiraIssueLinkBody(issue.key, portfolioKey);
         webClient.post()
             .uri(new URI("https://jira.hh.ru/rest/api/2/issueLink"))
             .header("Content-Type", "application/json")
@@ -441,7 +442,7 @@ public class SlackOnBolt {
 //
 //
 //  так можно поискать людей
-//  curl -X GET 'https://jira.hh.ru/rest/api/2/user/search?username=r.kozlov' \
+//  curl -X GET 'https://jira.hh.ru/rest/api/2/user/search?username=v.pupkin' \
 //      --header 'Accept: application/json' \
 //      --header 'Authorization: Basic c1231=' \
 //
@@ -463,8 +464,8 @@ public class SlackOnBolt {
   }
 
 
-  public String makeJiraDoneBody(GameRoom gameRoom, String userName, String portfolioLink) {
-    String roomResults = gameRoom.getTasks().stream()
+  public String makeJiraDoneBody(List<Task> tasks, String userName, String portfolioLink) {
+    String roomResults = tasks.stream()
         .map(t -> t.getTitle() + " - " + t.getFinalMark())
         .collect(Collectors.joining("\n"));
 
@@ -490,8 +491,8 @@ public class SlackOnBolt {
         """.formatted(roomResults, userName, portfolioLink);
   }
 
-  public String makeGameRoomEndedBody(GameRoom gameRoom) {
-    String roomResults = gameRoom.getTasks().stream()
+  public String makeGameRoomEndedBody(Integer gameRoomId, List<Task> tasks) {
+    String roomResults = tasks.stream()
         .map(t -> t.getTitle() + " - " + t.getFinalMark())
         .collect(Collectors.joining("\n"));
 
@@ -521,7 +522,7 @@ public class SlackOnBolt {
             ]
           }
         ]
-        """.formatted(roomResults, gameRoom.getId(), CREATE_JIRA_ISSUE_EVENT);
+        """.formatted(roomResults, gameRoomId, CREATE_JIRA_ISSUE_EVENT);
   }
 
   public String makeTaskEndedBody(
@@ -531,7 +532,7 @@ public class SlackOnBolt {
       String finalMark
   ) {
     String pollResults = estimations.stream()
-        .map(e -> e.getUserName() + " " + e.getMark())
+        .map(e -> e.getSlackUserName() + " " + e.getMark())
         .collect(Collectors.joining("\n"));
 
     return """
@@ -556,7 +557,7 @@ public class SlackOnBolt {
 
   public String makePollEndedBody(String userName, List<TaskEstimation> estimations) {
     String pollResults = estimations.stream()
-        .map(e -> e.getUserName() + " " + e.getMark())
+        .map(e -> e.getSlackUserName() + " " + e.getMark())
         .collect(Collectors.joining("\n"));
 
     return """
@@ -645,7 +646,7 @@ public class SlackOnBolt {
   }
 
 
-  public String makeNextTaskButtonBody(String gameRoomId) {
+  public String makeNextTaskButtonBody(Integer gameRoomId) {
     return """
         [
           {
@@ -734,7 +735,7 @@ public class SlackOnBolt {
         """.formatted(gameRoomId, POLL_ENDED_EVENT);
   }
 
-  public String malePollUpdatedBody(String gameRoomId, String taskTitle, List<String> marks, List<String> users) {
+  public String malePollUpdatedBody(Integer gameRoomId, String taskTitle, List<String> marks, List<String> users) {
     String usersDone = """
         {
           "type": "section",
@@ -813,8 +814,8 @@ public class SlackOnBolt {
         """.formatted(gameRoomId, POLL_ENDED_EVENT);
   }
 
-  private String makeJiraIssueBody(GameRoom gameRoom, User user) {
-    String issues = gameRoom.getTasks().stream().map(task -> """
+  private String makeJiraIssueBody(List<Task> tasks, HhUser user) {
+    String issues = tasks.stream().map(task -> """
         {
             "fields": {
                 "project": {

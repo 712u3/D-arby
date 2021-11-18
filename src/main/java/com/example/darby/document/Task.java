@@ -1,17 +1,49 @@
 package com.example.darby.document;
 
-
-import java.util.List;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
 
 public class Task {
 
+  @Id
+  @Column("task_id")
+  private Integer id;
+  private Integer gameRoomId;
+  private Integer taskOrder;
   private String title;
-  private List<TaskEstimation> estimations;
   private String finalMark;
 
-  public Task(String title) {
+  public Task() {
+  }
+
+  public Task(Integer gameRoomId, String title, Integer taskOrder) {
+    this.gameRoomId = gameRoomId;
     this.title = title;
-    this.estimations = List.of();
+    this.taskOrder = taskOrder;
+  }
+
+  public Integer getId() {
+    return id;
+  }
+
+  public void setId(Integer id) {
+    this.id = id;
+  }
+
+  public Integer getGameRoomId() {
+    return gameRoomId;
+  }
+
+  public void setGameRoomId(Integer gameRoomId) {
+    this.gameRoomId = gameRoomId;
+  }
+
+  public Integer getTaskOrder() {
+    return taskOrder;
+  }
+
+  public void setTaskOrder(Integer taskOrder) {
+    this.taskOrder = taskOrder;
   }
 
   public String getTitle() {
@@ -20,14 +52,6 @@ public class Task {
 
   public void setTitle(String title) {
     this.title = title;
-  }
-
-  public List<TaskEstimation> getEstimations() {
-    return estimations;
-  }
-
-  public void setEstimations(List<TaskEstimation> estimations) {
-    this.estimations = estimations;
   }
 
   public String getFinalMark() {

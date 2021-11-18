@@ -1,23 +1,9 @@
 version: "3.8"
 services:
-  mongodb:
-    image : mongo
-    container_name: mongodb
-    environment:
-      - PUID=1000
-      - PGID=1000
-    volumes:
-      - ./database:/data/db
-    ports:
-      - 27017:27017
-    restart: unless-stopped
-
   darby-app:
-    image: darby:0.0.1-SNAPSHOT
+    image: darby:latest
     ports:
       - 8082:8082
     volumes:
       - ./src/etc/application-prod.yml:/etc/myapp/application-prod.yml
-#    restart: always
-    depends_on:
-      - mongodb
+    restart: always

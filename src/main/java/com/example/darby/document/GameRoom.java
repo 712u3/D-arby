@@ -1,40 +1,39 @@
 package com.example.darby.document;
 
 import java.time.Instant;
-import java.util.List;
-import java.util.Optional;
 import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.relational.core.mapping.Column;
 
-@Document
 public class GameRoom {
 
   @Id
-  private String id;
+  @Column("game_room_id")
+  private Integer id;
   private String portfolioKey;
-  private String estimationScaleId;
-  private String userId;
+  private Integer estimationScaleId;
+  private String slackUserId;
   private String channelId;
   private String threadId;
-  private List<Task> tasks;
   private Instant created;
 
-  public GameRoom(String portfolioKey, String estimationScaleId, String userId, String channelId,
-                  String threadId, List<Task> tasks) {
+  public GameRoom() {
+  }
+
+  public GameRoom(String portfolioKey, Integer estimationScaleId, String slackUserId, String channelId,
+                  String threadId) {
     this.portfolioKey = portfolioKey;
     this.estimationScaleId = estimationScaleId;
-    this.userId = userId;
+    this.slackUserId = slackUserId;
     this.channelId = channelId;
     this.threadId = threadId;
-    this.tasks = tasks;
     this.created = Instant.now();
   }
 
-  public String getId() {
+  public Integer getId() {
     return id;
   }
 
-  public void setId(String id) {
+  public void setId(Integer id) {
     this.id = id;
   }
 
@@ -46,20 +45,20 @@ public class GameRoom {
     this.portfolioKey = portfolioKey;
   }
 
-  public String getEstimationScaleId() {
+  public Integer getEstimationScaleId() {
     return estimationScaleId;
   }
 
-  public void setEstimationScaleId(String estimationScaleId) {
+  public void setEstimationScaleId(Integer estimationScaleId) {
     this.estimationScaleId = estimationScaleId;
   }
 
-  public String getUserId() {
-    return userId;
+  public String getSlackUserId() {
+    return slackUserId;
   }
 
-  public void setUserId(String userId) {
-    this.userId = userId;
+  public void setSlackUserId(String slackUserId) {
+    this.slackUserId = slackUserId;
   }
 
   public String getChannelId() {
@@ -78,25 +77,11 @@ public class GameRoom {
     this.threadId = threadId;
   }
 
-  public List<Task> getTasks() {
-    return tasks;
-  }
-
-  public void setTasks(List<Task> tasks) {
-    this.tasks = tasks;
-  }
-
   public Instant getCreated() {
     return created;
   }
 
   public void setCreated(Instant created) {
     this.created = created;
-  }
-
-  public Optional<Task> getNextTask() {
-    return getTasks().stream()
-        .filter(task -> task.getFinalMark() == null)
-        .findFirst();
   }
 }

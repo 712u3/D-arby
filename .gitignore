@@ -1,6 +1,5 @@
 build/
 out/
 .gradle/
-database/
 database.mv.db
 application-prod.yml

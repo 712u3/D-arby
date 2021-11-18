@@ -2,29 +2,36 @@ package com.example.darby.document;
 
 import java.util.List;
 import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.relational.core.mapping.Column;
 
-@Document
 public class EstimationScale {
 
   @Id
-  private String id;
+  @Column("estimation_scale_id")
+  private Integer id;
   private String name;
   private List<String> marks;
   private Boolean basic;
+
+  public EstimationScale() {
+  }
 
   public EstimationScale(String name, List<String> marks) {
     this.name = name;
     this.marks = marks;
     this.basic = false;
-    this.basic = true;
   }
 
-  public String getId() {
+  public EstimationScale(String name, List<String> marks, Boolean basic) {
+    this(name, marks);
+    this.basic = basic;
+  }
+
+  public Integer getId() {
     return id;
   }
 
-  public void setId(String id) {
+  public void setId(Integer id) {
     this.id = id;
   }
 

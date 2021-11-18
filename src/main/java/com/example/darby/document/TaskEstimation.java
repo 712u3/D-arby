@@ -1,21 +1,48 @@
 package com.example.darby.document;
 
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+
 public class TaskEstimation {
 
-  private String userName;
+  @Id
+  @Column("task_estimation_id")
+  private Integer id;
+  private Integer taskId;
+  private String slackUserName;
   private String mark;
 
-  public TaskEstimation(String userName, String mark) {
-    this.userName = userName;
+  public TaskEstimation() {
+  }
+
+  public TaskEstimation(Integer taskId, String slackUserName, String mark) {
+    this.taskId = taskId;
+    this.slackUserName = slackUserName;
     this.mark = mark;
   }
 
-  public String getUserName() {
-    return userName;
+  public Integer getId() {
+    return id;
   }
 
-  public void setUserName(String userName) {
-    this.userName = userName;
+  public void setId(Integer id) {
+    this.id = id;
+  }
+
+  public Integer getTaskId() {
+    return taskId;
+  }
+
+  public void setTaskId(Integer taskId) {
+    this.taskId = taskId;
+  }
+
+  public String getSlackUserName() {
+    return slackUserName;
+  }
+
+  public void setSlackUserName(String slackUserName) {
+    this.slackUserName = slackUserName;
   }
 
   public String getMark() {
