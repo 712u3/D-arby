@@ -1,4 +1,4 @@
-version: "3.8"
+version: "3.3"
 services:
   darby-app:
     image: registry.pyn.ru/darby:latest

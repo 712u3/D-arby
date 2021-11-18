@@ -97,12 +97,32 @@ public class H2Dao {
 
     r2dbcTemplate.insert(EstimationScale.class)
         .into("estimation_scale")
-        .using(new EstimationScale("Последовательная", List.of("1", "2", "3", "4", "5", "6", "7", "8"), true))
+        .using(new EstimationScale("Scrum", List.of("0", "0.5", "1",
+            "2", "3", "5", "8", "13", "20", "40", "100", "?", "coffee"), true))
         .block();
 
     r2dbcTemplate.insert(EstimationScale.class)
         .into("estimation_scale")
-        .using(new EstimationScale("Фибоначи", List.of("1", "2", "3", "5", "8", "13", "21"), true))
+        .using(new EstimationScale("Фибоначи", List.of("0", "1", "2",
+            "3", "5", "8", "13", "21", "34", "55", "89", "?", "coffee"), true))
+        .block();
+
+    r2dbcTemplate.insert(EstimationScale.class)
+        .into("estimation_scale")
+        .using(new EstimationScale("Последовательная", List.of("0", "1", "2",
+            "3", "4", "5", "6", "7", "8", "9", "10", "?", "coffee"), true))
+        .block();
+
+    r2dbcTemplate.insert(EstimationScale.class)
+        .into("estimation_scale")
+        .using(new EstimationScale("Reel pocker", List.of("Ace", "2", "3",
+            "5", "8", "King", "?", "coffee"), true))
+        .block();
+
+    r2dbcTemplate.insert(EstimationScale.class)
+        .into("estimation_scale")
+        .using(new EstimationScale("Майки", List.of("XS", "S", "M",
+            "L", "XL", "XXL", "?", "coffee"), true))
         .block();
   }
 
