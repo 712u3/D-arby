@@ -11,12 +11,17 @@ Rename `application-prod.yml.example` to `application-prod.yml`
 ./gradlew jibDockerBuild
 ```
 
-### Run
-```shell
-docker-compose up
-```
-
 ### Push image
 ```shell
 docker push registry.pyn.ru/darby:latest
+```
+
+### Pull image
+```shell
+docker pull registry.pyn.ru/darby:latest
+```
+
+### Run
+```shell
+docker-compose up
 ```
