@@ -14,7 +14,7 @@ public class H2Config {
   @Bean
   public H2ConnectionFactory connectionFactory() {
     H2ConnectionConfiguration connectionConfiguration = H2ConnectionConfiguration.builder()
-        .file("/Users/l.vinogradov/projects/D-arby/database")
+        .file("/etc/myapp/database")
         .username("sa")
         .password("")
         .option("DB_CLOSE_DELAY=-1")

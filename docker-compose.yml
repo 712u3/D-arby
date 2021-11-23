@@ -6,6 +6,7 @@ services:
       - 8082:8082
     volumes:
       - ./etc/application-prod.yml:/etc/myapp/application-prod.yml
+      - ./etc/database/database.mv.db:/etc/myapp/database/database.mv.db
     restart: always
     logging:
       driver: "json-file"
