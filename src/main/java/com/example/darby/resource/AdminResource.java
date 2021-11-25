@@ -1,10 +1,9 @@
 package com.example.darby.resource;
 
 import com.example.darby.dao.H2Dao;
-import com.slack.api.bolt.App;
+import com.example.darby.service.SlackHelper;
 import com.slack.api.methods.SlackApiException;
 import java.io.IOException;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -17,13 +16,11 @@ import reactor.core.publisher.Mono;
 public class AdminResource {
 
   private final H2Dao dao;
-  private final App slackApp;
-  private final String xoxbToken;
+  private final SlackHelper slackHelper;
 
-  public AdminResource(H2Dao dao, App slackApp, @Value("${xoxb-token}") String xoxbToken) {
+  public AdminResource(H2Dao dao, SlackHelper slackHelper) {
     this.dao = dao;
-    this.slackApp = slackApp;
-    this.xoxbToken = xoxbToken;
+    this.slackHelper = slackHelper;
   }
 
   @PostMapping("/clear-db")
@@ -40,12 +37,7 @@ public class AdminResource {
       return Mono.empty();
     }
 
-    // TODO call on pool
-    slackApp.client().chatPostMessage(r -> r
-        .token(xoxbToken)
-        .channel(slackMessage.channelId)
-        .threadTs(slackMessage.threadId)
-        .text(slackMessage.text));
+    slackHelper.postSlackMessage(slackMessage.channelId, slackMessage.threadId, slackMessage.text, null);
 
     return Mono.empty();
   }

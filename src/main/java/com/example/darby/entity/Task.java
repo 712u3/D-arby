@@ -12,6 +12,9 @@ public class Task {
   private Integer taskOrder;
   private String title;
   private String finalMark;
+  private String messageId;
+  private Boolean stopped;
+  private Boolean deleted;
 
   public Task() {
   }
@@ -20,6 +23,8 @@ public class Task {
     this.gameRoomId = gameRoomId;
     this.title = title;
     this.taskOrder = taskOrder;
+    this.stopped = false;
+    this.deleted = false;
   }
 
   public Integer getId() {
@@ -60,6 +65,30 @@ public class Task {
 
   public void setFinalMark(String finalMark) {
     this.finalMark = finalMark;
+  }
+
+  public String getMessageId() {
+    return messageId;
+  }
+
+  public void setMessageId(String messageId) {
+    this.messageId = messageId;
+  }
+
+  public Boolean getStopped() {
+    return stopped;
+  }
+
+  public void setStopped(Boolean stopped) {
+    this.stopped = stopped;
+  }
+
+  public Boolean getDeleted() {
+    return deleted;
+  }
+
+  public void setDeleted(Boolean deleted) {
+    this.deleted = deleted;
   }
 
   public String getStoryPoints() {

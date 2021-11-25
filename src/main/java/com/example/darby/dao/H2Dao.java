@@ -50,7 +50,8 @@ public class H2Dao {
             slack_user_id VARCHAR(30),
             channel_id VARCHAR(30),
             thread_id VARCHAR(30),
-            created TIMESTAMP WITH TIME ZONE
+            created TIMESTAMP WITH TIME ZONE,
+            ended boolean
           )
         """)
         .fetch()
@@ -76,7 +77,10 @@ public class H2Dao {
             game_room_id integer,
             task_order integer,
             title VARCHAR(63),
-            final_mark VARCHAR(30)
+            final_mark VARCHAR(30),
+            message_id VARCHAR(30),
+            stopped boolean,
+            deleted boolean
           )
         """)
         .fetch()
@@ -180,7 +184,7 @@ public class H2Dao {
       Criteria criteria = Criteria.where("task_estimation_id").is(estimation.getId());
       Query query = Query.query(criteria);
 
-      Update update = Update.update("mark", estimation.getMark());
+      Update update = Update.update("mark", mark);
       r2dbcTemplate.update(TaskEstimation.class).inTable("task_estimation").matching(query).apply(update).block();
     }
   }
@@ -189,11 +193,11 @@ public class H2Dao {
     return h2Repository.getTaskEstimationsByTaskId(taskId).collectList().block();
   }
 
-  public void updateTask(Task currentTask) {
-    Criteria criteria = Criteria.where("task_id").is(currentTask.getId());
+  public void updateTaskField(Integer taskId, String field, Object value) {
+    Criteria criteria = Criteria.where("task_id").is(taskId);
     Query query = Query.query(criteria);
 
-    Update update = Update.update("final_mark", currentTask.getFinalMark());
+    Update update = Update.update(field, value);
     r2dbcTemplate.update(Task.class).inTable("task").matching(query).apply(update).block();
   }
 
@@ -212,5 +216,17 @@ public class H2Dao {
 
   public List<Task> getGameRoomTasks(Integer roomId) {
     return h2Repository.getRoomTasksByRoomId(roomId).collectList().block();
+  }
+
+  public Task getTaskByMessageId(String messageId) {
+    return h2Repository.getTaskByMessageId(messageId).block();
+  }
+
+  public void updateGameRoomField(Integer gameRoomId, String field, Object value) {
+    Criteria criteria = Criteria.where("game_room_id").is(gameRoomId);
+    Query query = Query.query(criteria);
+
+    Update update = Update.update(field, value);
+    r2dbcTemplate.update(GameRoom.class).inTable("game_room").matching(query).apply(update).block();
   }
 }

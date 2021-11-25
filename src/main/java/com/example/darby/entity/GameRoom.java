@@ -15,6 +15,7 @@ public class GameRoom {
   private String channelId;
   private String threadId;
   private Instant created;
+  private Boolean ended;
 
   public GameRoom() {
   }
@@ -27,6 +28,7 @@ public class GameRoom {
     this.channelId = channelId;
     this.threadId = threadId;
     this.created = Instant.now();
+    this.ended = false;
   }
 
   public Integer getId() {
@@ -83,5 +85,13 @@ public class GameRoom {
 
   public void setCreated(Instant created) {
     this.created = created;
+  }
+
+  public Boolean getEnded() {
+    return ended;
+  }
+
+  public void setEnded(Boolean ended) {
+    this.ended = ended;
   }
 }

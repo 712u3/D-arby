@@ -67,6 +67,7 @@ public interface H2Repository extends ReactiveCrudRepository<BasicEntity, String
       from task
       where game_room_id = :gameRoomId
         and final_mark is null
+        and deleted = false
       order by task_order
       limit 1
       """
@@ -106,7 +107,17 @@ public interface H2Repository extends ReactiveCrudRepository<BasicEntity, String
       select *
       from task
       where game_room_id = :roomId
+        and deleted = false
       """
   )
   Flux<Task> getRoomTasksByRoomId(Integer roomId);
+
+  @Query(
+      """
+      select *
+      from task
+      where message_id = :messageId
+      """
+  )
+  Mono<Task> getTaskByMessageId(String messageId);
 }
