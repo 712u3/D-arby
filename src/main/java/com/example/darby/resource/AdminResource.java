@@ -23,6 +23,7 @@ public class AdminResource {
     this.slackHelper = slackHelper;
   }
 
+  // curl -X POST -H 'Content-Type: application/json' '127.0.0.1:8082/admin/clear-db'
   @PostMapping("/clear-db")
   public Mono<Void> getEmployeeById() {
     dao.prepareDatabase();
