@@ -22,8 +22,8 @@ dependencies {
     implementation("io.r2dbc:r2dbc-h2:0.8.4.RELEASE")
 
     // slack on bolt dependencies
-    implementation("com.slack.api:bolt:1.13.0")
-    implementation("com.slack.api:bolt-socket-mode:1.13.0")
+    implementation("com.slack.api:bolt:1.14.0")
+    implementation("com.slack.api:bolt-socket-mode:1.14.0")
     implementation("javax.websocket:javax.websocket-api:1.1")
     implementation("org.glassfish.tyrus.bundles:tyrus-standalone-client:1.17")
 

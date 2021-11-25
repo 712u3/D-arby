@@ -59,8 +59,8 @@
 //    WsRequestMessage request = rasparsit(req, WsRequestMessage.class);
 //
 //    CommonWsRequest wsRequest = rasparsit(req, CommonWsRequest.class);
-//    if (wsRequest instanceof InteractionRequest) {
-//      processWsRequest((InteractionRequest) wsRequest);
+//    if (wsRequest instanceof InteractionRequest wsRequest2) {
+//      processWsRequest(wsRequest2);
 //    } else if (wsRequest instanceof HelloRequest) {
 //      processWsRequest((HelloRequest) wsRequest);
 //    } else if (wsRequest instanceof ApiEventRequest) {

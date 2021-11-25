@@ -1,4 +1,4 @@
-package com.example.darby.document;
+package com.example.darby.entity;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.relational.core.mapping.Column;

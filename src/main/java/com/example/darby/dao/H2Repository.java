@@ -1,11 +1,11 @@
 package com.example.darby.dao;
 
-import com.example.darby.document.BasicEntity;
-import com.example.darby.document.EstimationScale;
-import com.example.darby.document.GameRoom;
-import com.example.darby.document.HhUser;
-import com.example.darby.document.Task;
-import com.example.darby.document.TaskEstimation;
+import com.example.darby.entity.BasicEntity;
+import com.example.darby.entity.EstimationScale;
+import com.example.darby.entity.GameRoom;
+import com.example.darby.entity.HhUser;
+import com.example.darby.entity.Task;
+import com.example.darby.entity.TaskEstimation;
 import org.springframework.data.r2dbc.repository.Query;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 import reactor.core.publisher.Flux;

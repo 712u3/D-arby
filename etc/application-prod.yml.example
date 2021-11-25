@@ -2,3 +2,6 @@ xoxb-token: "example"
 xapp-token: "example"
 jira-username: "example"
 jira-password: "example"
+
+database:
+  path: "/etc/myapp/database"

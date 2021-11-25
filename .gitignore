@@ -3,3 +3,4 @@ out/
 .gradle/
 database.mv.db
 application-prod.yml
+application-dev.yml

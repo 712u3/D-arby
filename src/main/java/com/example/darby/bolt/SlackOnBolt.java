@@ -1,11 +1,11 @@
 package com.example.darby.bolt;
 
 import com.example.darby.dao.H2Dao;
-import com.example.darby.document.EstimationScale;
-import com.example.darby.document.GameRoom;
-import com.example.darby.document.Task;
-import com.example.darby.document.TaskEstimation;
-import com.example.darby.document.HhUser;
+import com.example.darby.entity.EstimationScale;
+import com.example.darby.entity.GameRoom;
+import com.example.darby.entity.Task;
+import com.example.darby.entity.TaskEstimation;
+import com.example.darby.entity.HhUser;
 import com.example.darby.dto.CrabTeam;
 import com.example.darby.dto.JiraIssuesCreated;
 import com.slack.api.app_backend.dialogs.payload.DialogSubmissionPayload;
@@ -47,7 +47,6 @@ import javax.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.util.Pair;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -81,7 +80,7 @@ public class SlackOnBolt {
                      App slackApp,
                      @Value("${jira-username}") String jiraUsername,
                      @Value("${jira-password}") String jiraPassword,
-                     @Value("${xapp-token}") String xappToken) {
+                     @Value("${xapp-token}") String xappToken) throws Exception {
     this.dao = dao;
     this.webClient = webClient;
     this.slackApp = slackApp;
@@ -89,10 +88,11 @@ public class SlackOnBolt {
     String jiraCred = jiraUsername + ":" + jiraPassword;
     this.jiraToken = Base64.getEncoder().encodeToString(jiraCred.getBytes());
     this.xappToken = xappToken;
+    slackAppInit();
   }
 
-  @Scheduled(initialDelay = 1000, fixedDelay=Long.MAX_VALUE)
-  public void init() throws Exception {
+//  @Scheduled(initialDelay = 1000, fixedDelay=Long.MAX_VALUE)
+  public void slackAppInit() throws Exception {
     // stub
     slackApp.event(ReactionAddedEvent.class, this::emodzi);
     slackApp.event(ReactionRemovedEvent.class, (payload, ctx) -> ctx.ack());
@@ -113,7 +113,7 @@ public class SlackOnBolt {
     slackApp.dialogSubmission(ROLL_EVENT, this::handleRollEvent);
 
     socketApp = new SocketModeApp(xappToken, slackApp);
-    socketApp.start();
+    socketApp.startAsync();
   }
 
   @PreDestroy

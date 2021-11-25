@@ -1,4 +1,4 @@
-package com.example.darby.document;
+package com.example.darby.entity;
 
 import java.util.List;
 import org.springframework.data.annotation.Id;
