@@ -145,22 +145,31 @@ public class JiraHelper {
     return Optional.empty();
   }
 
-  public Optional<Integer> makeSumStoryPoints(List<Task> tasks) {
-    List<Integer> intMarks = tasks.stream()
+  public Optional<Float> makeSumStoryPoints(List<Task> tasks) {
+    List<Float> floatMarks = tasks.stream()
         .map(Task::getFinalMark)
-        .filter(JiraHelper::isInt)
-        .map(Integer::parseInt)
+        .filter(JiraHelper::isFloat)
+        .map(Float::parseFloat)
         .collect(Collectors.toList());
 
-    if (tasks.size() != intMarks.size()) {
+    if (tasks.size() != floatMarks.size()) {
       return Optional.empty();
     }
-    return Optional.of(intMarks.stream().reduce(0, Integer::sum));
+    return Optional.of(floatMarks.stream().reduce(0.0f, Float::sum));
   }
 
   static boolean isInt(String s) {
     try {
       int i = Integer.parseInt(s);
+      return true;
+    } catch(NumberFormatException er) {
+      return false;
+    }
+  }
+
+  static boolean isFloat(String s) {
+    try {
+      float f = Float.parseFloat(s);
       return true;
     } catch(NumberFormatException er) {
       return false;

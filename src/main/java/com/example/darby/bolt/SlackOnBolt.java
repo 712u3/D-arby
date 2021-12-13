@@ -538,7 +538,7 @@ public class SlackOnBolt {
         .map(t -> t.getTitle() + " - " + t.getFinalMark())
         .collect(Collectors.joining("\n"));
 
-    Optional<Integer> sumStoryPointsOpt = jiraHelper.makeSumStoryPoints(tasks);
+    Optional<Float> sumStoryPointsOpt = jiraHelper.makeSumStoryPoints(tasks);
     String sumStoryPoints = sumStoryPointsOpt.map(s -> " (" + s + ")").orElse("");
 
     return "[" +
@@ -553,7 +553,7 @@ public class SlackOnBolt {
         .map(t -> t.getTitle() + " - " + t.getFinalMark())
         .collect(Collectors.joining("\n"));
 
-    Optional<Integer> sumStoryPointsOpt = jiraHelper.makeSumStoryPoints(tasks);
+    Optional<Float> sumStoryPointsOpt = jiraHelper.makeSumStoryPoints(tasks);
     String sumStoryPoints = sumStoryPointsOpt.map(s -> " (" + s + ")").orElse("");
 
     return "[" +
