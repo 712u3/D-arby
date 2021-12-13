@@ -3,6 +3,7 @@ package com.example.darby.dao;
 import com.example.darby.entity.EstimationScale;
 import com.example.darby.entity.GameRoom;
 import com.example.darby.entity.HhUser;
+import com.example.darby.entity.HistoryLog;
 import com.example.darby.entity.Task;
 import com.example.darby.entity.TaskEstimation;
 import java.util.List;
@@ -26,14 +27,14 @@ public class H2Dao {
 
   public void prepareDatabase() {
     r2dbcTemplate.getDatabaseClient().sql("""
-          DROP TABLE IF EXISTS task, task_estimation, hhuser, estimation_scale, game_room
+          DROP TABLE IF EXISTS task, task_estimation, hhuser, estimation_scale, game_room, history_log
         """)
         .fetch().rowsUpdated().block();
 
     r2dbcTemplate.getDatabaseClient().sql("""
           CREATE TABLE IF not EXISTS estimation_scale(
             estimation_scale_id integer auto_increment PRIMARY KEY,
-            name VARCHAR(20),
+            name VARCHAR(60),
             marks array,
             basic boolean
           )
@@ -47,9 +48,10 @@ public class H2Dao {
             game_room_id integer auto_increment PRIMARY KEY,
             portfolio_key VARCHAR(30),
             estimation_scale_id integer,
-            slack_user_id VARCHAR(30),
-            channel_id VARCHAR(30),
-            thread_id VARCHAR(30),
+            slack_user_id VARCHAR(60),
+            ldap_team_name VARCHAR(60),
+            slack_channel_id VARCHAR(60),
+            slack_thread_id VARCHAR(60),
             created TIMESTAMP WITH TIME ZONE,
             ended boolean
           )
@@ -61,10 +63,10 @@ public class H2Dao {
     r2dbcTemplate.getDatabaseClient().sql("""
           CREATE TABLE IF not EXISTS hhuser(
             hhuser_id integer auto_increment PRIMARY KEY,
-            slack_id VARCHAR(30),
-            slack_user_name VARCHAR(30),
-            ldap_user_name VARCHAR(30),
-            ldap_team_name VARCHAR(30)
+            slack_id VARCHAR(60),
+            slack_user_name VARCHAR(60),
+            ldap_user_name VARCHAR(60),
+            ldap_team_name VARCHAR(60)
           )
         """)
         .fetch()
@@ -76,9 +78,9 @@ public class H2Dao {
             task_id integer auto_increment PRIMARY KEY,
             game_room_id integer,
             task_order integer,
-            title VARCHAR(63),
+            title VARCHAR(127),
             final_mark VARCHAR(30),
-            message_id VARCHAR(30),
+            message_id VARCHAR(60),
             stopped boolean,
             deleted boolean
           )
@@ -91,8 +93,21 @@ public class H2Dao {
           CREATE TABLE IF not EXISTS task_estimation(
             task_estimation_id integer auto_increment PRIMARY KEY,
             task_id integer,
-            slack_user_name VARCHAR(30),
+            slack_user_name VARCHAR(60),
             mark VARCHAR(30)
+          )
+        """)
+        .fetch()
+        .rowsUpdated()
+        .block();
+
+    r2dbcTemplate.getDatabaseClient().sql("""
+          CREATE TABLE IF not EXISTS history_log(
+            history_log_id integer auto_increment PRIMARY KEY,
+            game_room_id integer,
+            slack_user_id VARCHAR(60),
+            message VARCHAR(255),
+            created TIMESTAMP WITH TIME ZONE
           )
         """)
         .fetch()
@@ -130,18 +145,18 @@ public class H2Dao {
         .block();
   }
 
-  public List<EstimationScale> getAllEstimationScales(String slackUserId) {
-    Integer estimationScaleId = h2Repository.getLastRoomBySlackUserId(slackUserId).blockOptional()
+  public List<EstimationScale> getAllEstimationScalesForUser(HhUser user) {
+    Integer estimationScaleId = h2Repository.getLastRoomByLdapTeamName(user.getLdapTeamName()).blockOptional()
         .map(EstimationScale::getId).orElse(null);
-    return h2Repository.getAllEstimationScales2(estimationScaleId).collectList().block();
+    return h2Repository.getBasicEstimationScalesWithExtra(estimationScaleId).collectList().block();
   }
 
-  // race condition
-  public void saveUserIfNotExists(HhUser user) {
-    HhUser existingUser = h2Repository.getUserBySlackId(user.getSlackId()).blockFirst();
-    if (existingUser == null) {
-      r2dbcTemplate.insert(HhUser.class).into("hhuser").using(user).block();
-    }
+  public HhUser getUserBySlackId(String slackUserId) {
+    return h2Repository.getUserBySlackId(slackUserId).block();
+  }
+
+  public void saveUser(HhUser user) {
+    r2dbcTemplate.insert(HhUser.class).into("hhuser").using(user).block();
   }
 
   public Integer saveEstimationScaleId(EstimationScale estimationScale) {
@@ -150,6 +165,10 @@ public class H2Dao {
 
   public Integer saveGameRoom(GameRoom gameRoom) {
     return r2dbcTemplate.insert(GameRoom.class).into("game_room").using(gameRoom).block().getId();
+  }
+
+  public Integer saveHistoryLog(HistoryLog historyLog) {
+    return r2dbcTemplate.insert(HistoryLog.class).into("history_log").using(historyLog).block().getId();
   }
 
   public void saveTasks(List<Task> tasks) {
@@ -170,23 +189,21 @@ public class H2Dao {
     return h2Repository.getLastTaskByGameRoomId(gameRoomId).block();
   }
 
-  public GameRoom getGameRoomByThreadId(String threadId) {
+  public GameRoom getGameRoomBySlackThreadId(String threadId) {
     return h2Repository.getGameRoomByThreadId(threadId).blockFirst();
   }
 
-  // race condition
-  public void updateOrSaveTaskEstimation(Integer taskId, String slackUserName, String mark) {
-    TaskEstimation estimation = h2Repository.getTaskEstimationByTaskIdAndUserName(taskId, slackUserName).block();
-    if (estimation == null) {
-      TaskEstimation taskEstimation = new TaskEstimation(taskId, slackUserName, mark);
-      r2dbcTemplate.insert(TaskEstimation.class).into("task_estimation").using(taskEstimation).block();
-    } else {
-      Criteria criteria = Criteria.where("task_estimation_id").is(estimation.getId());
-      Query query = Query.query(criteria);
+  public TaskEstimation saveTaskEstimation(Integer taskId, String slackUserName, String mark) {
+    TaskEstimation taskEstimation = new TaskEstimation(taskId, slackUserName, mark);
+    return r2dbcTemplate.insert(TaskEstimation.class).into("task_estimation").using(taskEstimation).block();
+  }
 
-      Update update = Update.update("mark", mark);
-      r2dbcTemplate.update(TaskEstimation.class).inTable("task_estimation").matching(query).apply(update).block();
-    }
+  public void updateTaskEstimation(TaskEstimation taskEstimation, String mark) {
+    Criteria criteria = Criteria.where("task_estimation_id").is(taskEstimation.getId());
+    Query query = Query.query(criteria);
+
+    Update update = Update.update("mark", mark);
+    r2dbcTemplate.update(TaskEstimation.class).inTable("task_estimation").matching(query).apply(update).block();
   }
 
   public List<TaskEstimation> getTaskEstimations(Integer taskId) {
@@ -199,10 +216,6 @@ public class H2Dao {
 
     Update update = Update.update(field, value);
     r2dbcTemplate.update(Task.class).inTable("task").matching(query).apply(update).block();
-  }
-
-  public HhUser getUserBySlackId(String slackUserId) {
-    return h2Repository.getUserBySlackId(slackUserId).blockFirst();
   }
 
   public void updateUser(HhUser user) {

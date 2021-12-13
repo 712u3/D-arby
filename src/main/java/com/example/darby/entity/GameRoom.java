@@ -11,22 +11,21 @@ public class GameRoom {
   private Integer id;
   private String portfolioKey;
   private Integer estimationScaleId;
-  private String slackUserId;
-  private String channelId;
-  private String threadId;
+  private String slackUserId; // owner
+  private String ldapTeamName; // owner
+  private String slackChannelId;
+  private String slackThreadId; // main message
   private Instant created;
   private Boolean ended;
 
   public GameRoom() {
   }
 
-  public GameRoom(String portfolioKey, Integer estimationScaleId, String slackUserId, String channelId,
-                  String threadId) {
+  public GameRoom(String portfolioKey, Integer estimationScaleId, String slackUserId, String slackChannelId) {
     this.portfolioKey = portfolioKey;
     this.estimationScaleId = estimationScaleId;
     this.slackUserId = slackUserId;
-    this.channelId = channelId;
-    this.threadId = threadId;
+    this.slackChannelId = slackChannelId;
     this.created = Instant.now();
     this.ended = false;
   }
@@ -63,20 +62,28 @@ public class GameRoom {
     this.slackUserId = slackUserId;
   }
 
-  public String getChannelId() {
-    return channelId;
+  public String getLdapTeamName() {
+    return ldapTeamName;
   }
 
-  public void setChannelId(String channelId) {
-    this.channelId = channelId;
+  public void setLdapTeamName(String ldapTeamName) {
+    this.ldapTeamName = ldapTeamName;
   }
 
-  public String getThreadId() {
-    return threadId;
+  public String getSlackChannelId() {
+    return slackChannelId;
   }
 
-  public void setThreadId(String threadId) {
-    this.threadId = threadId;
+  public void setSlackChannelId(String slackChannelId) {
+    this.slackChannelId = slackChannelId;
+  }
+
+  public String getSlackThreadId() {
+    return slackThreadId;
+  }
+
+  public void setSlackThreadId(String slackThreadId) {
+    this.slackThreadId = slackThreadId;
   }
 
   public Instant getCreated() {

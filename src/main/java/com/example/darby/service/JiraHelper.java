@@ -15,6 +15,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 @Component
 public class JiraHelper {
@@ -32,41 +34,38 @@ public class JiraHelper {
     this.webClient = webClient;
   }
 
-  public void createJiraIssues(String portfolioKey, List<Task> tasks, HhUser user) {
-    JiraIssuesCreated creationResponse;
-    try {
-      String issuesBody = makeJiraIssueBody(tasks, user);
-      creationResponse = webClient.post()
-          .uri(new URI("https://jira.hh.ru/rest/api/2/issue/bulk"))
-          .header("Content-Type", "application/json")
-          .header("Authorization", "Basic " + jiraToken)
-          .body(BodyInserters.fromValue(issuesBody))
-          .retrieve()
-          .bodyToMono(JiraIssuesCreated.class)
-          .log()
-          .block();
-    } catch (URISyntaxException e) {
-      e.printStackTrace();
-      throw new RuntimeException("");
-    }
+  public Mono<Void> createJiraIssues(String portfolioKey, List<Task> tasks, HhUser user) {
+    Mono<JiraIssuesCreated> createJiraIssuesMono = webClient.post()
+        .uri(createUri("https://jira.hh.ru/rest/api/2/issue/bulk"))
+        .header("Content-Type", "application/json")
+        .header("Authorization", "Basic " + jiraToken)
+        .body(BodyInserters.fromValue(makeJiraIssueBody(tasks, user)))
+        .retrieve()
+        .bodyToMono(JiraIssuesCreated.class)
+        .log();
 
-    creationResponse.issues.forEach(issue -> {
-      try {
-        String issueLinkBody = makeJiraIssueLinkBody(issue.key, portfolioKey);
-        webClient.post()
-            .uri(new URI("https://jira.hh.ru/rest/api/2/issueLink"))
-            .header("Content-Type", "application/json")
-            .header("Authorization", "Basic " + jiraToken)
-            .body(BodyInserters.fromValue(issueLinkBody))
-            .retrieve()
-            .bodyToMono(JiraIssuesCreated.class)
-            .log()
-            .block();
-      } catch (URISyntaxException e) {
-        e.printStackTrace();
-        throw new RuntimeException("123");
-      }
-    });
+
+    return createJiraIssuesMono.flatMap(jiraIssuesCreated ->
+        createJiraIssuesLinkMono(jiraIssuesCreated, portfolioKey));
+  }
+
+  private Mono<Void> createJiraIssuesLinkMono(JiraIssuesCreated jiraIssuesCreated, String portfolioKey) {
+    List<Mono<JiraIssuesCreated>> monoList = jiraIssuesCreated.issues.stream()
+        .map(issue -> makeJiraIssueLinkMono(issue.key, portfolioKey))
+        .collect(Collectors.toList());
+
+    return Flux.zip(monoList, objects -> objects).then();
+  }
+
+  private Mono<JiraIssuesCreated> makeJiraIssueLinkMono(String issueKey, String portfolioKey) {
+    return webClient.post()
+        .uri(createUri("https://jira.hh.ru/rest/api/2/issueLink"))
+        .header("Content-Type", "application/json")
+        .header("Authorization", "Basic " + jiraToken)
+        .body(BodyInserters.fromValue(makeJiraIssueLinkBody(issueKey, portfolioKey)))
+        .retrieve()
+        .bodyToMono(JiraIssuesCreated.class)
+        .log();
   }
 
   private String makeJiraIssueBody(List<Task> tasks, HhUser user) {
@@ -139,6 +138,10 @@ public class JiraHelper {
       return Optional.of(matcher_short.group(1));
     }
 
+    if ("stub".equals(portfolioString)) {
+      return Optional.of(portfolioString);
+    }
+
     return Optional.empty();
   }
 
@@ -164,4 +167,15 @@ public class JiraHelper {
     }
   }
 
+  static URI createUri(String url) {
+    URI issuesUri;
+    try {
+      issuesUri = new URI(url);
+    } catch (URISyntaxException e) {
+      e.printStackTrace();
+      throw new RuntimeException("impossible, uri is not done");
+    }
+
+    return issuesUri;
+  }
 }

@@ -2,6 +2,7 @@ package com.example.darby.service;
 
 import com.slack.api.bolt.App;
 import com.slack.api.methods.SlackApiException;
+import com.slack.api.methods.response.chat.ChatPostEphemeralResponse;
 import com.slack.api.methods.response.chat.ChatPostMessageResponse;
 import com.slack.api.methods.response.chat.ChatUpdateResponse;
 import java.io.IOException;
@@ -10,6 +11,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
 
 @Component
 public class SlackHelper {
@@ -22,7 +24,6 @@ public class SlackHelper {
     this.slackApp = slackApp;
   }
 
-  // TODO call on pool
   public ChatUpdateResponse updateSlackMessage(String channelId,
                                                String messageId,
                                                String title,
@@ -41,7 +42,54 @@ public class SlackHelper {
     return resp;
   }
 
-  // TODO call on pool
+  public Mono<ChatUpdateResponse> updateSlackMessageMono(String channelId,
+                                                         String messageId,
+                                                         String title,
+                                                         String blocks) {
+    ChatUpdateResponse resp;
+    try {
+      resp = slackApp.client().chatUpdate(r -> r
+          .token(xoxbToken)
+          .channel(channelId)
+          .ts(messageId)
+          .text(title)
+          .blocksAsString(blocks)
+      );
+    } catch (IOException | SlackApiException e) {
+      e.printStackTrace();
+      throw new RuntimeException("Can't update message");
+    }
+    if (!resp.isOk()) {
+      System.out.println("chatUpdate failed: " + resp.getError());
+    }
+
+    return Mono.just(resp);
+  }
+
+  public ChatPostEphemeralResponse postSlackMessageEphemeral(String channelId,
+                                                             String threadId,
+                                                             String slackUserId,
+                                                             String text) {
+    ChatPostEphemeralResponse resp;
+    try {
+      resp = slackApp.client().chatPostEphemeral(r -> r
+          .token(xoxbToken)
+          .channel(channelId)
+          .threadTs(threadId)
+          .user(slackUserId)
+          .text(text));
+    } catch (IOException | SlackApiException e) {
+      e.printStackTrace();
+      throw new RuntimeException("Can't send ephemeral message");
+    }
+
+    if (!resp.isOk()) {
+      System.out.println("chatPostEphemeral failed: " + resp.getError());
+    }
+
+    return resp;
+  }
+
   public ChatPostMessageResponse postSlackMessage(String channelId,
                                                   String threadId,
                                                   String title,
@@ -70,6 +118,19 @@ public class SlackHelper {
             }
           }
       """.formatted(text);
+  }
+
+  public String makePlainTextMultilineBlock(List<String> lines) {
+    return lines.stream().map("""
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "%s"
+                  }
+                }
+            """::formatted)
+        .collect(Collectors.joining(","));
   }
 
   public String makeMarkDownBlock(String text) {

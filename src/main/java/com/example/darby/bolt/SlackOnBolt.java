@@ -1,5 +1,6 @@
 package com.example.darby.bolt;
 
+import com.example.darby.entity.HistoryLog;
 import com.example.darby.entity.TaskEstimation;
 import com.example.darby.resource.PollHandler;
 import static com.example.darby.resource.PollHandler.CREATE_JIRA_ISSUE_EVENT;
@@ -21,7 +22,7 @@ import com.example.darby.entity.HhUser;
 import com.slack.api.app_backend.dialogs.payload.DialogSubmissionPayload;
 import com.slack.api.app_backend.events.payload.EventsApiPayload;
 import com.slack.api.app_backend.interactive_components.payload.BlockActionPayload;
-import com.slack.api.app_backend.interactive_components.payload.MessageShortcutPayload;
+import com.slack.api.app_backend.interactive_components.payload.GlobalShortcutPayload;
 import com.slack.api.bolt.App;
 import com.slack.api.bolt.context.builtin.ActionContext;
 import com.slack.api.bolt.context.builtin.DialogSubmissionContext;
@@ -47,27 +48,35 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.r2dbc.UncategorizedR2dbcException;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
 
 @Component
 public class SlackOnBolt {
+  // TODO текущий актуальный список задач
+  // TODO лог действий
+  private static final String ERROR_DIALOG = "error_dialog";
   private static final String CREATE_ROOM_SHORTCUT = "create_room_shortcut";
   private static final String CREATE_ROOM_REQUEST_EVENT = "create_room_request_event";
   private static final String ADD_TASK_SHORTCUT = "add_task_shortcut";
   private static final String ADD_TASK_EVENT = "add_task_event";
   public static final Pattern ADD_TASK_EVENT_PATTERN = Pattern.compile("^" + ADD_TASK_EVENT + "-.*$");
-  private static final String CHANGE_TASK_SHORTCUT = "change_task_shortcut";
-  private static final String CHANGE_TASK_EVENT = "change_task_event";
-  public static final Pattern CHANGE_TASK_EVENT_PATTERN = Pattern.compile("^" + CHANGE_TASK_EVENT + "-.*$");
+  private static final String RENAME_TASK_SHORTCUT = "rename_task_shortcut";
+  private static final String RENAME_TASK_EVENT = "rename_task_event";
+  public static final Pattern RENAME_TASK_EVENT_PATTERN = Pattern.compile("^" + RENAME_TASK_EVENT + "-.*$");
   private static final String DELETE_TASK_SHORTCUT = "delete_task_shortcut";
   private static final String DELETE_TASK_EVENT = "delete_task_event";
   public static final Pattern DELETE_TASK_EVENT_PATTERN = Pattern.compile("^" + DELETE_TASK_EVENT + "-.*$");
 
+  private final ConcurrentHashMap<Integer, Integer> jiraPendingFlag = new ConcurrentHashMap();
 
   private final String xappToken;
   private final App slackApp;
@@ -107,6 +116,7 @@ public class SlackOnBolt {
     slackApp.event(MessageChangedEvent.class, (payload, ctx) -> ctx.ack());
     slackApp.event(MessageFileShareEvent.class, (payload, ctx) -> ctx.ack());
     slackApp.event(MessageDeletedEvent.class, (payload, ctx) -> ctx.ack());
+    slackApp.dialogSubmission(ERROR_DIALOG, (req, ctx) -> ctx.ack());
 
     // roll
     slackApp.globalShortcut(ROLL_SHORTCUT, rollHandler::handleRollShortcut);
@@ -117,8 +127,8 @@ public class SlackOnBolt {
     slackApp.dialogSubmission(CREATE_ROOM_REQUEST_EVENT, this::handleCreateGameRoom);
     slackApp.messageShortcut(ADD_TASK_SHORTCUT, this::handleAddTaskShortcut);
     slackApp.dialogSubmission(ADD_TASK_EVENT_PATTERN, this::handleAddTask);
-    slackApp.messageShortcut(CHANGE_TASK_SHORTCUT, this::handleChangeTaskShortcut);
-    slackApp.dialogSubmission(CHANGE_TASK_EVENT_PATTERN, this::handleChangeTask);
+    slackApp.messageShortcut(RENAME_TASK_SHORTCUT, this::handleRenameTaskShortcut);
+    slackApp.dialogSubmission(RENAME_TASK_EVENT_PATTERN, this::handleRenameTask);
     slackApp.messageShortcut(DELETE_TASK_SHORTCUT, this::handleDeleteTaskShortcut);
     slackApp.dialogSubmission(DELETE_TASK_EVENT_PATTERN, this::handleDeleteTask);
 
@@ -142,7 +152,15 @@ public class SlackOnBolt {
       GlobalShortcutRequest req,
       GlobalShortcutContext ctx
   ) throws SlackApiException, IOException {
-    List<EstimationScale> estimationScales = dao.getAllEstimationScales(req.getPayload().getUser().getId());
+    GlobalShortcutPayload.User slackUser = req.getPayload().getUser();
+    HhUser user;
+    try {
+      user = crabHelper.getHhUserUserEnriched(slackUser.getId(), slackUser.getUsername()).block();
+    } catch (Exception ex) {
+      return sendErrorDialog(req, ctx, "Crab не работает");
+    }
+
+    List<EstimationScale> estimationScales = dao.getAllEstimationScalesForUser(user);
     String modal = makeRoomCreationModalBody(estimationScales);
 
     DialogOpenResponse response = ctx.client().dialogOpen(r -> r
@@ -156,7 +174,7 @@ public class SlackOnBolt {
     return ctx.ack();
   }
 
-  // dialog rules https://api.slack.com/dialogs
+  // dialog rules https://api.slack.com/dialogs#elements
   public String makeRoomCreationModalBody(List<EstimationScale> estimationScales) {
     String scaleOptions = estimationScales.stream()
         .map(item -> """
@@ -182,7 +200,7 @@ public class SlackOnBolt {
                     "label": "Список задач",
                     "type": "textarea",
                     "name": "tasks_text",
-                    "hint": "на отдельных строчках"
+                    "hint": "На отдельных строчках"
                 },
                 {
                     "label": "Выбрать шкалу",
@@ -202,7 +220,8 @@ public class SlackOnBolt {
                     "label": "Своя шкала",
                     "type": "text",
                     "name": "new_estimation_scale",
-                    "optional": true
+                    "optional": true,
+                    "hint": "Разделители - запятые и пробелы"
                 }
             ]
         }
@@ -216,35 +235,50 @@ public class SlackOnBolt {
     DialogSubmissionPayload.Channel slackChannel = req.getPayload().getChannel();
     DialogSubmissionPayload.User slackUser = req.getPayload().getUser();
     Map<String, String> formData = req.getPayload().getSubmission();
-    String portfolioKey = jiraHelper.extractPortfolioKey(formData.get("portfolio_key")).orElseThrow();
+    Optional<String> portfolioKeyOpt = jiraHelper.extractPortfolioKey(formData.get("portfolio_key"));
+    if (portfolioKeyOpt.isEmpty()) {
+      return ctx.ackWithJson(makeErrorDialogAck("portfolio_key", "Неправильный формат"));
+    }
+    String portfolioKey = portfolioKeyOpt.get();
     String tasksText = formData.get("tasks_text");
     String formEstimationScaleId = formData.get("estimation_scale_id");
     String newEstimationScale = formData.get("new_estimation_scale");
-
-    dao.saveUserIfNotExists(new HhUser(slackUser.getId(), slackUser.getName()));
 
     Integer estimationScaleId;
     if (formEstimationScaleId.equals("new_scale")) {
       EstimationScale estimationScale = new EstimationScale("Своя шкала", List.of(newEstimationScale.split("[\\s,]+")));
       if (estimationScale.getMarks().size() == 0) {
-        return ctx.ack();
+        return ctx.ackWithJson(makeErrorDialogAck("new_estimation_scale", "Не может быть пустой"));
       }
       estimationScaleId = dao.saveEstimationScaleId(estimationScale);
     } else {
       estimationScaleId = Integer.valueOf(formEstimationScaleId);
     }
 
-    ChatPostMessageResponse response = slackHelper.postSlackMessage(slackChannel.getId(), null,
-        "Тредик для оценки", makeMainMessageBody(portfolioKey));
-    String threadId = response.getTs();
-
-    GameRoom gameRoom = new GameRoom(portfolioKey, estimationScaleId,
-        slackUser.getId(), slackChannel.getId(), threadId);
+    GameRoom gameRoom = new GameRoom(portfolioKey, estimationScaleId, slackUser.getId(), slackChannel.getId());
     Integer gameRoomId = dao.saveGameRoom(gameRoom);
+
     AtomicInteger idx = new AtomicInteger();
     List<Task> tasks = tasksText.lines().map(title -> new Task(gameRoomId, title, idx.getAndIncrement()))
         .collect(Collectors.toList());
-    dao.saveTasks(tasks);
+    try {
+      dao.saveTasks(tasks);
+    } catch(UncategorizedR2dbcException ex) {
+      String errMessage = ex.getMessage();
+      if (errMessage != null && errMessage.contains("Value too long for column \"TITLE")) {
+        return ctx.ackWithJson(makeErrorDialogAck("tasks_text", "Название задачи слишком длинное"));
+      }
+      return null;
+    }
+
+    dao.saveHistoryLog(new HistoryLog(gameRoomId, slackUser.getId(),
+        "%s создал комнату".formatted(slackUser.getName())));
+
+    ChatPostMessageResponse response = slackHelper.postSlackMessage(slackChannel.getId(), null,
+        "Тредик для оценки", makeMainMessageBody(portfolioKey));
+    String threadId = response.getTs();
+    gameRoom.setSlackThreadId(threadId);
+    dao.updateGameRoomField(gameRoom.getId(), "slack_thread_id", threadId);
 
     slackHelper.postSlackMessage(slackChannel.getId(), threadId,
         "Начать оценку", makeNextTaskButtonBody(gameRoom.getId()));
@@ -258,7 +292,7 @@ public class SlackOnBolt {
     return "[" +
         slackHelper.makeMarkDownBlock("Тредик для оценки <%s|%s>".formatted(portfolioLink, portfolioKey)) +
         "]";
-  };
+  }
 
   private String makeNextTaskButtonBody(Integer gameRoomId) {
     return "[" +
@@ -305,9 +339,10 @@ public class SlackOnBolt {
     String tasksText = formData.get("tasks_text");
     String threadId = req.getPayload().getCallbackId().replace(ADD_TASK_EVENT + "-", "");
 
-    dao.saveUserIfNotExists(new HhUser(slackUser.getId(), slackUser.getName()));
-
-    GameRoom gameRoom = dao.getGameRoomByThreadId(threadId);
+    GameRoom gameRoom = dao.getGameRoomBySlackThreadId(threadId);
+    if (gameRoom.getEnded()) {
+      return ctx.ack();
+    }
     List<Task> existsTasks = dao.getGameRoomTasks(gameRoom.getId());
     int lastOrder = existsTasks.get(existsTasks.size() - 1).getTaskOrder();
     AtomicInteger idx = new AtomicInteger(lastOrder + 1);
@@ -315,17 +350,18 @@ public class SlackOnBolt {
         .collect(Collectors.toList());
     dao.saveTasks(tasks);
 
+    dao.saveHistoryLog(new HistoryLog(gameRoom.getId(), slackUser.getId(),
+        "%s добавил задач".formatted(slackUser.getName())));
+
     return ctx.ack();
   }
 
-  public Response handleChangeTaskShortcut(
+  public Response handleRenameTaskShortcut(
       MessageShortcutRequest req,
       MessageShortcutContext ctx
   ) throws SlackApiException, IOException {
-    MessageShortcutPayload.User slackUser = req.getPayload().getUser();
     String messageId = req.getPayload().getMessageTs();
 
-    dao.saveUserIfNotExists(new HhUser(slackUser.getId(), slackUser.getName()));
     Task task = dao.getTaskByMessageId(messageId);
 
     String modal = """
@@ -342,7 +378,7 @@ public class SlackOnBolt {
                 
             ]
         }
-        """.formatted(CHANGE_TASK_EVENT, messageId, task.getTitle());
+        """.formatted(RENAME_TASK_EVENT, messageId, task.getTitle());
 
     DialogOpenResponse response = ctx.client().dialogOpen(r -> r
         .triggerId(req.getPayload().getTriggerId())
@@ -355,24 +391,26 @@ public class SlackOnBolt {
     return ctx.ack();
   }
 
-  private Response handleChangeTask(DialogSubmissionRequest req,
+  private Response handleRenameTask(DialogSubmissionRequest req,
                                     DialogSubmissionContext ctx) throws SlackApiException, IOException {
     DialogSubmissionPayload.User slackUser = req.getPayload().getUser();
     String channelId = req.getPayload().getChannel().getId();
     Map<String, String> formData = req.getPayload().getSubmission();
     String formText = formData.get("tasks_text");
-    String messageId = req.getPayload().getCallbackId().replace(CHANGE_TASK_EVENT + "-", "");
+    String messageId = req.getPayload().getCallbackId().replace(RENAME_TASK_EVENT + "-", "");
 
-    dao.saveUserIfNotExists(new HhUser(slackUser.getId(), slackUser.getName()));
     Task task = dao.getTaskByMessageId(messageId);
-    task.setTitle(formText);
-    dao.updateTaskField(task.getId(), "title", formText);
-
     GameRoom gameRoom = dao.getGameRoom(task.getGameRoomId());
     EstimationScale estimationScale = dao.getEstimationScale(gameRoom.getEstimationScaleId());
     List<TaskEstimation> taskEstimations = dao.getTaskEstimations(task.getId());
 
-    pollHandler.updateTaskMessage(task, estimationScale.getMarks(), channelId, slackUser.getName(), taskEstimations);
+    dao.saveHistoryLog(new HistoryLog(task.getGameRoomId(), slackUser.getId(),
+        "%s переименовал задачу с '%s' на '%s'".formatted(slackUser.getName(), task.getTitle(), formText)));
+
+    task.setTitle(formText);
+    dao.updateTaskField(task.getId(), "title", formText);
+
+    pollHandler.updateTaskMessage(task, estimationScale.getMarks(), channelId, taskEstimations);
 
     return ctx.ack();
   }
@@ -381,10 +419,8 @@ public class SlackOnBolt {
       MessageShortcutRequest req,
       MessageShortcutContext ctx
   ) throws SlackApiException, IOException {
-    MessageShortcutPayload.User slackUser = req.getPayload().getUser();
     String messageId = req.getPayload().getMessageTs();
 
-    dao.saveUserIfNotExists(new HhUser(slackUser.getId(), slackUser.getName()));
     dao.getTaskByMessageId(messageId); // чтобы упасть если ткнули на не таске
 
     String modal = """
@@ -418,21 +454,22 @@ public class SlackOnBolt {
   private Response handleDeleteTask(DialogSubmissionRequest req,
                                     DialogSubmissionContext ctx) throws SlackApiException, IOException {
     DialogSubmissionPayload.User slackUser = req.getPayload().getUser();
-    dao.saveUserIfNotExists(new HhUser(slackUser.getId(), slackUser.getName()));
-
     String slackChannelId = req.getPayload().getChannel().getId();
     String messageId = req.getPayload().getCallbackId().replace(DELETE_TASK_EVENT + "-", "");
 
     Task task = dao.getTaskByMessageId(messageId);
+    GameRoom gameRoom = dao.getGameRoom(task.getGameRoomId());
+
     task.setDeleted(true);
     dao.updateTaskField(task.getId(), "deleted", true);
 
-    GameRoom gameRoom = dao.getGameRoom(task.getGameRoomId());
+    dao.saveHistoryLog(new HistoryLog(task.getGameRoomId(), slackUser.getId(),
+        "%s удалил задачу '%s'".formatted(slackUser.getName(), task.getTitle())));
 
-    pollHandler.updateTaskMessage(task, List.of(), slackChannelId, slackUser.getName(), List.of());
+    pollHandler.updateTaskMessage(task, List.of(), slackChannelId, List.of());
 
     if (!gameRoom.getEnded()) {
-      pollHandler.prepareNextTask(gameRoom, slackChannelId, gameRoom.getThreadId());
+      pollHandler.prepareNextTask(gameRoom, slackChannelId, gameRoom.getSlackThreadId());
     }
 
     return ctx.ack();
@@ -460,21 +497,43 @@ public class SlackOnBolt {
     String threadId = req.getPayload().getMessage().getThreadTs();
     BlockActionPayload.User slackUser = req.getPayload().getUser();
 
-    dao.saveUserIfNotExists(new HhUser(slackUser.getId(), slackUser.getName()));
-    GameRoom gameRoom = dao.getGameRoomByThreadId(threadId);
+    GameRoom gameRoom = dao.getGameRoomBySlackThreadId(threadId);
+
+    Integer oldValue = jiraPendingFlag.putIfAbsent(gameRoom.getId(), 1);
+    if (oldValue != null) {
+      return ctx.ack();
+    }
+
     List<Task> tasks = dao.getGameRoomTasks(gameRoom.getId());
+    dao.saveHistoryLog(new HistoryLog(gameRoom.getId(), slackUser.getId(),
+        "%s нажал жира кнопку".formatted(slackUser.getName())));
 
-    HhUser user = crabHelper.prepareLdapUser(slackUser.getId());
-    jiraHelper.createJiraIssues(gameRoom.getPortfolioKey(), tasks, user);
-
-    String portfolioLink = "https://jira.hh.ru/browse/" + gameRoom.getPortfolioKey();
-    String blocks = makeJiraDoneBody(tasks, slackUser.getUsername(), portfolioLink);
+    String blocks = makeJiraPendingBody(tasks);
     slackHelper.updateSlackMessage(channel.getId(), messageId, "Голосование", blocks);
+
+    // async block
+    String portfolioLink = "https://jira.hh.ru/browse/" + gameRoom.getPortfolioKey();
+    String doneBlocks = makeJiraDoneBody(tasks, portfolioLink);
+    crabHelper.getHhUserUserEnriched(slackUser.getId(), slackUser.getUsername())
+        .doOnError(ex -> {
+          slackHelper.postSlackMessageEphemeral(channel.getId(), threadId, slackUser.getId(), "Crab не работает");
+          String buttonBlocks = pollHandler.makeGameRoomEndedBody(gameRoom, tasks);
+          slackHelper.updateSlackMessageMono(channel.getId(), messageId, "Голосование", buttonBlocks);
+        })
+        .flatMap(hhUser -> jiraHelper.createJiraIssues(gameRoom.getPortfolioKey(), tasks, hhUser))
+        .then(slackHelper.updateSlackMessageMono(channel.getId(), messageId, "Голосование", doneBlocks))
+        .then(MonoWrapper(() -> jiraPendingFlag.remove(gameRoom.getId())))
+        .subscribe();
 
     return ctx.ack();
   }
 
-  private String makeJiraDoneBody(List<Task> tasks, String userName, String portfolioLink) {
+  private Mono<Void> MonoWrapper(Supplier<Object> supplier) {
+    supplier.get();
+    return Mono.empty().then();
+  }
+
+  private String makeJiraPendingBody(List<Task> tasks) {
     String roomResults = tasks.stream()
         .map(t -> t.getTitle() + " - " + t.getFinalMark())
         .collect(Collectors.joining("\n"));
@@ -485,7 +544,67 @@ public class SlackOnBolt {
     return "[" +
         slackHelper.makePlainTextBlock("Результаты%s:".formatted(sumStoryPoints)) + "," +
         slackHelper.makePlainTextBlock(roomResults) + "," +
-        slackHelper.makeMarkDownBlock("(%s)\n<%s|Задачи заведены>".formatted(userName, portfolioLink)) + "," +
+        slackHelper.makePlainTextBlock(":loading:") +
         "]";
+  }
+
+  private String makeJiraDoneBody(List<Task> tasks, String portfolioLink) {
+    String roomResults = tasks.stream()
+        .map(t -> t.getTitle() + " - " + t.getFinalMark())
+        .collect(Collectors.joining("\n"));
+
+    Optional<Integer> sumStoryPointsOpt = jiraHelper.makeSumStoryPoints(tasks);
+    String sumStoryPoints = sumStoryPointsOpt.map(s -> " (" + s + ")").orElse("");
+
+    return "[" +
+        slackHelper.makePlainTextBlock("Результаты%s:".formatted(sumStoryPoints)) + "," +
+        slackHelper.makePlainTextBlock(roomResults) + "," +
+        slackHelper.makeMarkDownBlock("<%s|Задачи заведены>".formatted(portfolioLink)) + "," +
+        "]";
+  }
+
+  private Response sendErrorDialog(GlobalShortcutRequest req,
+                                   GlobalShortcutContext ctx,
+                                   String message) throws SlackApiException, IOException {
+
+    String modal = """
+        {
+            "callback_id": "%s",
+            "title": "%s",
+            "submit_label": "Ok",
+            "elements": [
+                {
+                  "label": "Пожаловаться",
+                  "type": "text",
+                  "name": "tasks_text",
+                  "optional": true
+                }
+                
+            ]
+        }
+        """.formatted(ERROR_DIALOG, message);
+
+    DialogOpenResponse response = ctx.client().dialogOpen(r -> r
+        .triggerId(req.getPayload().getTriggerId())
+        .dialogAsString(modal));
+
+    if (!response.isOk()) {
+      System.out.println("dialogOpen failed: " + response.getError());
+    }
+
+    return ctx.ack();
+  }
+
+  private String makeErrorDialogAck(String key, String message) {
+    return """
+          {
+            "errors": [
+              {
+                "name": "%s",
+                "error": "%s"
+              }
+            ]
+          }
+          """.formatted(key, message);
   }
 }

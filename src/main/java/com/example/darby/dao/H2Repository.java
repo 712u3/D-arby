@@ -17,12 +17,12 @@ public interface H2Repository extends ReactiveCrudRepository<BasicEntity, String
     """
     select *
     from game_room
-    where slack_user_id = :slackUserId
+    where ldap_team_name = :ldapTeamName
     order by created desc
     limit 1
     """
   )
-  Mono<EstimationScale> getLastRoomBySlackUserId(String slackUserId);
+  Mono<EstimationScale> getLastRoomByLdapTeamName(String ldapTeamName);
 
   @Query(
     """
@@ -32,7 +32,7 @@ public interface H2Repository extends ReactiveCrudRepository<BasicEntity, String
       or estimation_scale_id in (:estimationScaleId)
     """
   )
-  Flux<EstimationScale> getAllEstimationScales2(Integer estimationScaleId);
+  Flux<EstimationScale> getBasicEstimationScalesWithExtra(Integer estimationScaleId);
 
   @Query(
       """
@@ -41,7 +41,7 @@ public interface H2Repository extends ReactiveCrudRepository<BasicEntity, String
       where slack_id = :slackId
       """
   )
-  Flux<HhUser> getUserBySlackId(String slackId);
+  Mono<HhUser> getUserBySlackId(String slackId);
 
   @Query(
       """
@@ -78,10 +78,10 @@ public interface H2Repository extends ReactiveCrudRepository<BasicEntity, String
       """
       select *
       from game_room
-      where thread_id = :threadId
+      where slack_thread_id = :slackThreadId
       """
   )
-  Flux<GameRoom> getGameRoomByThreadId(String threadId);
+  Flux<GameRoom> getGameRoomByThreadId(String slackThreadId);
 
   @Query(
       """
