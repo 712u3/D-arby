@@ -11,7 +11,6 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Mono;
 
 @Component
 public class SlackHelper {
@@ -27,25 +26,7 @@ public class SlackHelper {
   public ChatUpdateResponse updateSlackMessage(String channelId,
                                                String messageId,
                                                String title,
-                                               String blocks) throws SlackApiException, IOException {
-    ChatUpdateResponse resp = slackApp.client().chatUpdate(r -> r
-        .token(xoxbToken)
-        .channel(channelId)
-        .ts(messageId)
-        .text(title)
-        .blocksAsString(blocks)
-    );
-    if (!resp.isOk()) {
-      System.out.println("chatUpdate failed: " + resp.getError());
-    }
-
-    return resp;
-  }
-
-  public Mono<ChatUpdateResponse> updateSlackMessageMono(String channelId,
-                                                         String messageId,
-                                                         String title,
-                                                         String blocks) {
+                                               String blocks) {
     ChatUpdateResponse resp;
     try {
       resp = slackApp.client().chatUpdate(r -> r
@@ -63,7 +44,7 @@ public class SlackHelper {
       System.out.println("chatUpdate failed: " + resp.getError());
     }
 
-    return Mono.just(resp);
+    return resp;
   }
 
   public ChatPostEphemeralResponse postSlackMessageEphemeral(String channelId,

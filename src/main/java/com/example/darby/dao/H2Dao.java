@@ -145,8 +145,8 @@ public class H2Dao {
         .block();
   }
 
-  public List<EstimationScale> getAllEstimationScalesForUser(HhUser user) {
-    Integer estimationScaleId = h2Repository.getLastRoomByLdapTeamName(user.getLdapTeamName()).blockOptional()
+  public List<EstimationScale> getAllEstimationScalesForUser(String ldapTeam) {
+    Integer estimationScaleId = h2Repository.getLastRoomByLdapTeamName(ldapTeam).blockOptional()
         .map(EstimationScale::getId).orElse(null);
     return h2Repository.getBasicEstimationScalesWithExtra(estimationScaleId).collectList().block();
   }

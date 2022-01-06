@@ -184,9 +184,7 @@ public class PollHandler {
 
   // этот метод нужен потому что когда мы меняем описание задачи, нам надо обновить сообщение
   // которое может быть в любом состоянии
-  public void updateTaskMessage(Task task, List<String> marks,
-                                String channelId,
-                                List<TaskEstimation> taskEstimations) throws SlackApiException, IOException {
+  public void updateTaskMessage(Task task, List<String> marks, String channelId, List<TaskEstimation> taskEstimations) {
     if (task.getDeleted()) {
       // 0 Удалено
       String updBlocks = "[" + slackHelper.makePlainTextBlock("(удалено) " + task.getTitle()) + "]";

@@ -50,7 +50,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.annotation.PreDestroy;
@@ -160,7 +159,7 @@ public class SlackOnBolt {
       return sendErrorDialog(req, ctx, "Crab не работает");
     }
 
-    List<EstimationScale> estimationScales = dao.getAllEstimationScalesForUser(user);
+    List<EstimationScale> estimationScales = dao.getAllEstimationScalesForUser(user.getLdapTeamName());
     String modal = makeRoomCreationModalBody(estimationScales);
 
     DialogOpenResponse response = ctx.client().dialogOpen(r -> r
@@ -491,7 +490,7 @@ public class SlackOnBolt {
     return ctx.ack();
   }
 
-  private Response handleJiraButton(BlockActionRequest req, ActionContext ctx) throws IOException, SlackApiException {
+  private Response handleJiraButton(BlockActionRequest req, ActionContext ctx) {
     BlockActionPayload.Channel channel = req.getPayload().getChannel();
     String messageId = req.getPayload().getMessage().getTs();
     String threadId = req.getPayload().getMessage().getThreadTs();
@@ -515,22 +514,13 @@ public class SlackOnBolt {
     String portfolioLink = "https://jira.hh.ru/browse/" + gameRoom.getPortfolioKey();
     String doneBlocks = makeJiraDoneBody(tasks, portfolioLink);
     crabHelper.getHhUserUserEnriched(slackUser.getId(), slackUser.getUsername())
-        .doOnError(ex -> {
-          slackHelper.postSlackMessageEphemeral(channel.getId(), threadId, slackUser.getId(), "Crab не работает");
-          String buttonBlocks = pollHandler.makeGameRoomEndedBody(gameRoom, tasks);
-          slackHelper.updateSlackMessageMono(channel.getId(), messageId, "Голосование", buttonBlocks);
-        })
         .flatMap(hhUser -> jiraHelper.createJiraIssues(gameRoom.getPortfolioKey(), tasks, hhUser))
-        .then(slackHelper.updateSlackMessageMono(channel.getId(), messageId, "Голосование", doneBlocks))
-        .then(MonoWrapper(() -> jiraPendingFlag.remove(gameRoom.getId())))
+        .then(Mono.fromRunnable(() ->
+            slackHelper.updateSlackMessage(channel.getId(), messageId, "Голосование", doneBlocks)))
+        .then(Mono.fromRunnable(() -> jiraPendingFlag.remove(gameRoom.getId())))
         .subscribe();
 
     return ctx.ack();
-  }
-
-  private Mono<Void> MonoWrapper(Supplier<Object> supplier) {
-    supplier.get();
-    return Mono.empty().then();
   }
 
   private String makeJiraPendingBody(List<Task> tasks) {
