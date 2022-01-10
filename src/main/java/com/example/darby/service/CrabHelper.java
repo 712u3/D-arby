@@ -12,7 +12,6 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.util.Pair;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Mono;
 
 @Component
 public class CrabHelper {
@@ -25,7 +24,7 @@ public class CrabHelper {
     this.webClient = webClient;
   }
 
-  public Mono<HhUser> getHhUserUserEnriched(String slackUserId, String slackUserName) {
+  public HhUser getHhUserUserEnriched(String slackUserId, String slackUserName) {
     HhUser user = dao.getUserBySlackId(slackUserId);
     if (user == null) {
       user = new HhUser(slackUserId, slackUserName);
@@ -42,7 +41,7 @@ public class CrabHelper {
       dao.updateUser(user);
     }
 
-    return Mono.just(user);
+    return user;
   }
 
   public Pair<CrabTeam, CrabTeam.Mate> getCrabUser(String slackUserName) {

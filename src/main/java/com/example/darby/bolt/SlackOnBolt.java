@@ -39,6 +39,7 @@ import com.slack.api.methods.SlackApiException;
 import com.slack.api.methods.response.chat.ChatPostMessageResponse;
 import com.slack.api.methods.response.dialog.DialogOpenResponse;
 import com.slack.api.model.event.MessageChangedEvent;
+import com.slack.api.model.event.MessageChannelJoinEvent;
 import com.slack.api.model.event.MessageDeletedEvent;
 import com.slack.api.model.event.MessageEvent;
 import com.slack.api.model.event.MessageFileShareEvent;
@@ -75,7 +76,7 @@ public class SlackOnBolt {
   private static final String DELETE_TASK_EVENT = "delete_task_event";
   public static final Pattern DELETE_TASK_EVENT_PATTERN = Pattern.compile("^" + DELETE_TASK_EVENT + "-.*$");
 
-  private final ConcurrentHashMap<Integer, Integer> jiraPendingFlag = new ConcurrentHashMap();
+  private final ConcurrentHashMap<Integer, Integer> jiraPendingFlag = new ConcurrentHashMap<>();
 
   private final String xappToken;
   private final App slackApp;
@@ -116,6 +117,7 @@ public class SlackOnBolt {
     slackApp.event(MessageFileShareEvent.class, (payload, ctx) -> ctx.ack());
     slackApp.event(MessageDeletedEvent.class, (payload, ctx) -> ctx.ack());
     slackApp.dialogSubmission(ERROR_DIALOG, (req, ctx) -> ctx.ack());
+    slackApp.event(MessageChannelJoinEvent.class, (payload, ctx) -> ctx.ack());
 
     // roll
     slackApp.globalShortcut(ROLL_SHORTCUT, rollHandler::handleRollShortcut);
@@ -154,7 +156,7 @@ public class SlackOnBolt {
     GlobalShortcutPayload.User slackUser = req.getPayload().getUser();
     HhUser user;
     try {
-      user = crabHelper.getHhUserUserEnriched(slackUser.getId(), slackUser.getUsername()).block();
+      user = crabHelper.getHhUserUserEnriched(slackUser.getId(), slackUser.getUsername());
     } catch (Exception ex) {
       return sendErrorDialog(req, ctx, "Crab не работает");
     }
@@ -513,7 +515,7 @@ public class SlackOnBolt {
     // async block
     String portfolioLink = "https://jira.hh.ru/browse/" + gameRoom.getPortfolioKey();
     String doneBlocks = makeJiraDoneBody(tasks, portfolioLink);
-    crabHelper.getHhUserUserEnriched(slackUser.getId(), slackUser.getUsername())
+    Mono.fromSupplier(() -> crabHelper.getHhUserUserEnriched(slackUser.getId(), slackUser.getUsername()))
         .flatMap(hhUser -> jiraHelper.createJiraIssues(gameRoom.getPortfolioKey(), tasks, hhUser))
         .then(Mono.fromRunnable(() ->
             slackHelper.updateSlackMessage(channel.getId(), messageId, "Голосование", doneBlocks)))
