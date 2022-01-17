@@ -12,7 +12,6 @@ public class GameRoom {
   private String portfolioKey;
   private Integer estimationScaleId;
   private String slackUserId; // owner
-  private String ldapTeamName; // owner
   private String slackChannelId;
   private String slackThreadId; // main message
   private Instant created;
@@ -60,14 +59,6 @@ public class GameRoom {
 
   public void setSlackUserId(String slackUserId) {
     this.slackUserId = slackUserId;
-  }
-
-  public String getLdapTeamName() {
-    return ldapTeamName;
-  }
-
-  public void setLdapTeamName(String ldapTeamName) {
-    this.ldapTeamName = ldapTeamName;
   }
 
   public String getSlackChannelId() {

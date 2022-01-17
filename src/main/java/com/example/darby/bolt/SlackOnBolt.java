@@ -18,7 +18,6 @@ import com.example.darby.dao.H2Dao;
 import com.example.darby.entity.EstimationScale;
 import com.example.darby.entity.GameRoom;
 import com.example.darby.entity.Task;
-import com.example.darby.entity.HhUser;
 import com.slack.api.app_backend.dialogs.payload.DialogSubmissionPayload;
 import com.slack.api.app_backend.events.payload.EventsApiPayload;
 import com.slack.api.app_backend.interactive_components.payload.BlockActionPayload;
@@ -154,14 +153,14 @@ public class SlackOnBolt {
       GlobalShortcutContext ctx
   ) throws SlackApiException, IOException {
     GlobalShortcutPayload.User slackUser = req.getPayload().getUser();
-    HhUser user;
+
     try {
-      user = crabHelper.getHhUserUserEnriched(slackUser.getId(), slackUser.getUsername());
+      crabHelper.getHhUserUserEnriched(slackUser.getId(), slackUser.getUsername());
     } catch (Exception ex) {
-      return sendErrorDialog(req, ctx, "Crab не работает");
+//      return sendErrorDialog(req, ctx, "Crab не работает");
     }
 
-    List<EstimationScale> estimationScales = dao.getAllEstimationScalesForUser(user.getLdapTeamName());
+    List<EstimationScale> estimationScales = dao.getAllEstimationScalesForUser(slackUser.getId());
     String modal = makeRoomCreationModalBody(estimationScales);
 
     DialogOpenResponse response = ctx.client().dialogOpen(r -> r
@@ -364,6 +363,7 @@ public class SlackOnBolt {
     String messageId = req.getPayload().getMessageTs();
 
     Task task = dao.getTaskByMessageId(messageId);
+    String taskTitle = task.getTitle().substring(0, Math.min(task.getTitle().length(), 24)); // https://api.slack.com/methods/dialog.open
 
     String modal = """
         {
@@ -379,7 +379,7 @@ public class SlackOnBolt {
                 
             ]
         }
-        """.formatted(RENAME_TASK_EVENT, messageId, task.getTitle());
+        """.formatted(RENAME_TASK_EVENT, messageId, taskTitle);
 
     DialogOpenResponse response = ctx.client().dialogOpen(r -> r
         .triggerId(req.getPayload().getTriggerId())

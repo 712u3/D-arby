@@ -6,6 +6,7 @@ import com.example.darby.entity.GameRoom;
 import com.example.darby.entity.HhUser;
 import com.example.darby.entity.Task;
 import com.example.darby.entity.TaskEstimation;
+import java.util.List;
 import org.springframework.data.r2dbc.repository.Query;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 import reactor.core.publisher.Flux;
@@ -17,12 +18,12 @@ public interface H2Repository extends ReactiveCrudRepository<BasicEntity, String
     """
     select *
     from game_room
-    where ldap_team_name = :ldapTeamName
+    where slack_user_id in (:slackUserIds)
     order by created desc
     limit 1
     """
   )
-  Mono<EstimationScale> getLastRoomByLdapTeamName(String ldapTeamName);
+  Mono<EstimationScale> getLastRoomBySlackUserIds(List<String> slackUserIds);
 
   @Query(
     """
@@ -38,10 +39,21 @@ public interface H2Repository extends ReactiveCrudRepository<BasicEntity, String
       """
       select *
       from hhuser
-      where slack_id = :slackId
+      where slack_user_id = :slackId
       """
   )
   Mono<HhUser> getUserBySlackId(String slackId);
+
+  @Query(
+      """
+      select *
+      from hhuser
+      where ldap_team_name = (
+        select ldap_team_name from hhuser where slack_user_id = :slackId
+      )
+      """
+  )
+  Flux<HhUser> getSlackUserTeammateIds(String slackId);
 
   @Query(
       """

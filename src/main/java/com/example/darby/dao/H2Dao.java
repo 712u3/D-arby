@@ -7,6 +7,7 @@ import com.example.darby.entity.HistoryLog;
 import com.example.darby.entity.Task;
 import com.example.darby.entity.TaskEstimation;
 import java.util.List;
+import java.util.stream.Collectors;
 import org.springframework.data.r2dbc.core.R2dbcEntityTemplate;
 import org.springframework.data.relational.core.query.Criteria;
 import org.springframework.data.relational.core.query.Query;
@@ -49,7 +50,6 @@ public class H2Dao {
             portfolio_key VARCHAR(30),
             estimation_scale_id integer,
             slack_user_id VARCHAR(60),
-            ldap_team_name VARCHAR(60),
             slack_channel_id VARCHAR(60),
             slack_thread_id VARCHAR(60),
             created TIMESTAMP WITH TIME ZONE,
@@ -63,7 +63,7 @@ public class H2Dao {
     r2dbcTemplate.getDatabaseClient().sql("""
           CREATE TABLE IF not EXISTS hhuser(
             hhuser_id integer auto_increment PRIMARY KEY,
-            slack_id VARCHAR(60),
+            slack_user_id VARCHAR(60),
             slack_user_name VARCHAR(60),
             ldap_user_name VARCHAR(60),
             ldap_team_name VARCHAR(60)
@@ -145,8 +145,10 @@ public class H2Dao {
         .block();
   }
 
-  public List<EstimationScale> getAllEstimationScalesForUser(String ldapTeam) {
-    Integer estimationScaleId = h2Repository.getLastRoomByLdapTeamName(ldapTeam).blockOptional()
+  public List<EstimationScale> getAllEstimationScalesForUser(String slackUserId) {
+    List<String> slackUserIds = h2Repository.getSlackUserTeammateIds(slackUserId).collectList().block().stream()
+        .map(HhUser::getSlackUserId).collect(Collectors.toList());
+    Integer estimationScaleId = h2Repository.getLastRoomBySlackUserIds(slackUserIds).blockOptional()
         .map(EstimationScale::getId).orElse(null);
     return h2Repository.getBasicEstimationScalesWithExtra(estimationScaleId).collectList().block();
   }

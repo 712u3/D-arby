@@ -8,7 +8,7 @@ public class HhUser {
   @Id
   @Column("hhuser_id")
   private Integer id;
-  private String slackId;
+  private String slackUserId;
   private String slackUserName;
   private String ldapUserName;
   private String ldapTeamName;
@@ -16,8 +16,8 @@ public class HhUser {
   public HhUser() {
   }
 
-  public HhUser(String slackId, String slackUserName) {
-    this.slackId = slackId;
+  public HhUser(String slackUserId, String slackUserName) {
+    this.slackUserId = slackUserId;
     this.slackUserName = slackUserName;
   }
 
@@ -29,12 +29,12 @@ public class HhUser {
     this.id = id;
   }
 
-  public String getSlackId() {
-    return slackId;
+  public String getSlackUserId() {
+    return slackUserId;
   }
 
-  public void setSlackId(String slackId) {
-    this.slackId = slackId;
+  public void setSlackUserId(String slackUserId) {
+    this.slackUserId = slackUserId;
   }
 
   public String getSlackUserName() {
